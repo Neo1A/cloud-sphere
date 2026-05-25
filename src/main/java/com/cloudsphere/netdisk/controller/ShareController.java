@@ -57,7 +57,6 @@ public class ShareController {
     }
 
     /**
-     * 4. 🔓 匿名白名单：免登录直接物理下载单资产 (直击物理层，对齐 fileShare.md 痛点)
      * GET /file/share/download/{shortLink}
      */
     @GetMapping("/download/{shortLink}")
