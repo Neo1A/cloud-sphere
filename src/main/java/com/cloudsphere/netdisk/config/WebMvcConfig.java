@@ -19,11 +19,17 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(jwtInterceptor)
-                // 默认拦截系统内一切受保护的网盘业务请求
                 .addPathPatterns("/**")
-                // 精准放行白名单：登录与注册接口无需凭证
-                .excludePathPatterns("/user/login", "/user/register");
+                // 🎯 核心注入：刚性剔除这三个分享路由，允许外网匿名免密、免 Token 直接访问！
+                .excludePathPatterns(
+                        "/user/login",
+                        "/user/register",
+                        "/file/share/info/**",     // 🔓 放行获取分享元数据
+                        "/file/share/verify",      // 🔓 放行验证提取口令
+                        "/file/share/download/**"  // 🔓 放行匿名流式直连物理下载
+                );
     }
+
 
     /**
      * 全局跨域规范配置，防止 Vue 3 发生 Axios 跨域阻断

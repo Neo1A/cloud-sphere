@@ -21,6 +21,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.*;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -39,6 +40,19 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private String chunkTempRoot;
 
     private static final String REDIS_CHUNK_KEY_PREFIX = "cloudsphere:upload:chunks:";
+
+    // 🎯 核心整流 1：前置对齐前端 500KB 的精细刚性分片特征尺寸，用于精准计算多线程文件物理偏移量 (Offset)
+    private static final long FRONTIER_CHUNK_SIZE = 512000L;
+
+    // 🎯 核心整流 2：构建专属于极光大文件多线程物理合并的专用高吞吐线程池
+    private static final int CORE_POOL_SIZE = Runtime.getRuntime().availableProcessors() * 2;
+    private final ExecutorService mergeExecutor = new ThreadPoolExecutor(
+            CORE_POOL_SIZE,
+            CORE_POOL_SIZE * 2,
+            60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(1000),
+            new ThreadPoolExecutor.CallerRunsPolicy() // 队列满时由调用方线程兜底执行，绝对不丢失写盘流
+    );
 
     @Override
     public Set<Integer> initChunkUpload(ChunkInitDTO dto) {
@@ -75,7 +89,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     }
 
     /**
-     * 3. NIO 管道零拷贝物理合并（升级防重防重试版）
+     * 3. 🚀 NIO 管道多线程并发零拷贝大合并（升级高性能异步编排版）
      */
     @Override
     public void mergeChunks(FileMergeDTO dto) {
@@ -90,21 +104,15 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         if (existPhysicalFile != null) {
             log.info("【秒传大闸触发】哈希 [{}] 物理实体已存在，跳过磁盘合并，直接进行多租户软链挂载", identifier);
-
-            // 1. 物理引用计数加 1
             existPhysicalFile.setRefCount(existPhysicalFile.getRefCount() + 1);
             fileInfoMapper.updateById(existPhysicalFile);
-
-            // 2. 挂载逻辑文件树
             insertVirtualFile(userId, dto.getParentId(), dto.getFileName(), existPhysicalFile.getId());
-
-            // 3. 顺手清理临时温区
             Path chunkDir = Paths.get(chunkTempRoot).resolve(identifier);
             clearTempChunksAsync(chunkDir, identifier);
             return;
         }
 
-        // --- 以下为正常的物理首次合并流程 ---
+        // --- 以下为高并发多线程物理合并流程 ---
         Path chunkDir = Paths.get(chunkTempRoot).resolve(identifier);
         if (!Files.exists(chunkDir)) {
             throw new BusinessException(ResultCode.FILE_MERGE_ERROR);
@@ -123,20 +131,45 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String physicalName = identifier + suffix;
         Path targetPath = Paths.get(storageRoot).resolve(physicalName);
 
-        try (RandomAccessFile resultFile = new RandomAccessFile(targetPath.toFile(), "rw");
-             FileChannel resultChannel = resultFile.getChannel()) {
-
-            long currentPosition = 0;
+        try {
+            // 🎯 核心整流 3：刚性计算文件总尺寸，执行高空预分配磁盘空间，规避高并发扩容锁
+            long totalSize = 0;
             for (File chunk : sortedChunks) {
-                try (RandomAccessFile srcFile = new RandomAccessFile(chunk, "r");
-                     FileChannel srcChannel = srcFile.getChannel()) {
-                    long bytesTransferred = srcChannel.transferTo(0, srcChannel.size(), resultChannel);
-                    currentPosition += bytesTransferred;
-                    resultChannel.position(currentPosition);
-                }
+                totalSize += chunk.length();
             }
-            log.info("【NIO 零拷贝】首次大文件物理合并完成: {}", targetPath.toAbsolutePath());
+            Files.createDirectories(targetPath.getParent());
+            try (RandomAccessFile preAllocatedFile = new RandomAccessFile(targetPath.toFile(), "rw")) {
+                preAllocatedFile.setLength(totalSize); // 划定物理连续扇区
+            }
 
+            // 🎯 核心整流 4：将传统的串行单线程 for 循环重构为 CompletableFuture 多线程并行消费者模型
+            List<CompletableFuture<Void>> mergeTasks = sortedChunks.stream().map(chunk ->
+                    CompletableFuture.runAsync(() -> {
+                        int chunkNumber = Integer.parseInt(chunk.getName());
+                        // 根据当前分片序号，刚性推导其在最终物理资产中的绝对偏移位置
+                        long offset = (chunkNumber - 1) * FRONTIER_CHUNK_SIZE;
+
+                        // 每个合并线程独立打开各自的通道句柄，完全规避多线程竞争同一个句柄引发的同步互斥阻断
+                        try (RandomAccessFile targetRAF = new RandomAccessFile(targetPath.toFile(), "rw");
+                             FileChannel targetChannel = targetRAF.getChannel();
+                             RandomAccessFile srcRAF = new RandomAccessFile(chunk, "r");
+                             FileChannel srcChannel = srcRAF.getChannel()) {
+
+                            // 独立操纵当前线程的写指针偏移量，执行内核级 NIO 零拷贝转移
+                            targetChannel.position(offset);
+                            srcChannel.transferTo(0, srcChannel.size(), targetChannel);
+                        } catch (IOException e) {
+                            log.error("【多线程物理合并错误】分片 {} 写入失败", chunkNumber, e);
+                            throw new CompletionException(e);
+                        }
+                    }, mergeExecutor)
+            ).toList();
+
+            // 🎯 核心整流 5：挂载同步栅栏，阻塞等待全线并发切片刷盘任务平稳闭环
+            CompletableFuture.allOf(mergeTasks.toArray(new CompletableFuture[0])).join();
+            log.info("【NIO 多线程并发合并】首次大文件高并发合并成功: {}", targetPath.toAbsolutePath());
+
+            // 4. 元数据入库与多租户虚拟树挂载
             com.cloudsphere.netdisk.entity.FileInfo physicalFile = new com.cloudsphere.netdisk.entity.FileInfo();
             physicalFile.setFileIdentifier(identifier);
             physicalFile.setFilePath(targetPath.toString());
@@ -148,10 +181,11 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
             insertVirtualFile(userId, dto.getParentId(), dto.getFileName(), physicalFile.getId());
 
+            // 异步擦除扫尾
             clearTempChunksAsync(chunkDir, identifier);
 
-        } catch (IOException e) {
-            log.error("大文件合并致命 IO 异常", e);
+        } catch (Exception e) {
+            log.error("大文件并发合并发生致命未知故障", e);
             throw new BusinessException(ResultCode.FILE_MERGE_ERROR);
         }
     }

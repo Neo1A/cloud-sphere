@@ -7,16 +7,26 @@ import com.cloudsphere.netdisk.common.utils.UserContext;
 import com.cloudsphere.netdisk.dto.ShareCreateDTO;
 import com.cloudsphere.netdisk.entity.FileShare;
 import com.cloudsphere.netdisk.entity.UserFile;
+import com.cloudsphere.netdisk.entity.FileInfo;
 import com.cloudsphere.netdisk.mapper.FileShareMapper;
 import com.cloudsphere.netdisk.mapper.UserFileMapper;
+import com.cloudsphere.netdisk.mapper.FileInfoMapper;
 import com.cloudsphere.netdisk.service.ShareService;
 import com.cloudsphere.netdisk.vo.ShareVO;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.OutputStream;
+import java.net.URLEncoder;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
@@ -27,12 +37,12 @@ public class ShareServiceImpl implements ShareService {
 
     private final FileShareMapper fileShareMapper;
     private final UserFileMapper userFileMapper;
+    private final FileInfoMapper fileInfoMapper; // 🎯 注入物理映射，用以穿透多租户壁垒
 
     @Override
     public ShareVO createShare(ShareCreateDTO dto) {
         Long userId = UserContext.getUserId();
 
-        // 🛡️ 阻断第一关：物权判定！被分享的逻辑资产必须存在，且强制归属于当前登录用户
         UserFile userFile = userFileMapper.selectOne(new LambdaQueryWrapper<UserFile>()
                 .eq(UserFile::getId, dto.getUserFileId())
                 .eq(UserFile::getUserId, userId)
@@ -42,10 +52,7 @@ public class ShareServiceImpl implements ShareService {
             throw new BusinessException(ResultCode.FILE_NOT_FOUND);
         }
 
-        // 🎛️ 2. 定时失效时间核算 (全面支持自定义时长)
-        // 🎯 增强型时间解析逻辑
         LocalDateTime expireTime = null;
-
         if ("DAY_1".equals(dto.getExpireType())) {
             expireTime = LocalDateTime.now().plusDays(1);
         } else if ("DAY_7".equals(dto.getExpireType())) {
@@ -55,39 +62,26 @@ public class ShareServiceImpl implements ShareService {
             if (input == null || input.trim().isEmpty()) {
                 throw new BusinessException(ResultCode.PARAM_ERROR, "自定义到期时间不能为空");
             }
-            // 1. 定义兼容空格格式的解析器
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-
             try {
                 String normalized = input.trim();
-
-                // 如果前端传过来的是 YYYY-MM-DD HH:mm (16位)
-                if (normalized.length() == 16) {
-                    normalized += ":00";
-                }
-
-                // 2. 使用自定义的 formatter 解析
+                if (normalized.length() == 16) { normalized += ":00"; }
                 expireTime = LocalDateTime.parse(normalized, formatter);
-
                 if (expireTime.isBefore(LocalDateTime.now())) {
                     throw new BusinessException(ResultCode.PARAM_ERROR, "到期时间不能早于当前时间");
                 }
             } catch (Exception e) {
-                log.error("时间解析异常: input={}, error={}", dto.getCustomExpireTime(), e.getMessage());
                 throw new BusinessException(ResultCode.PARAM_ERROR, "到期时间格式应为 yyyy-MM-dd HH:mm:ss");
             }
         }
 
-        // 🔑 3. 提取口令随机发生器大闸
         String extractionCode = null;
         if (Boolean.TRUE.equals(dto.getNeedCode())) {
             extractionCode = String.format("%04d", ThreadLocalRandom.current().nextInt(10000));
         }
 
-        // 🔗 4. 生成 8 位无冲突全局随机短链特征码
         String shortLink = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 
-        // 5. 数据持久化落盘
         FileShare fileShare = new FileShare();
         fileShare.setUserId(userId);
         fileShare.setUserFileId(dto.getUserFileId());
@@ -97,18 +91,98 @@ public class ShareServiceImpl implements ShareService {
         fileShare.setCreateTime(LocalDateTime.now());
         fileShareMapper.insert(fileShare);
 
-        log.info("🟢【分享网关】用户 [{}] 成功为资产 [{}] 创建时效分享短链: {}", userId, userFile.getFileName(), shortLink);
+        log.info("🟢【分享网关】用户 [{}] 成功为资产 [{}] 创建链接: {}", userId, userFile.getFileName(), shortLink);
 
-        // 6. 拼装符合前台高真控制台标准的 VO
         ShareVO vo = new ShareVO();
-        // 此处的过桥短链会自动匹配我们在前端 App.vue 里定义的源站基本协议
         vo.setShareUrl("/s/" + shortLink);
         vo.setExtractionCode(extractionCode);
-        if (expireTime != null) {
-            vo.setExpireTime(expireTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
-        } else {
-            vo.setExpireTime("永久有效");
-        }
+        vo.setExpireTime(expireTime != null ? expireTime.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) : "永久有效");
         return vo;
+    }
+
+    /**
+     * 🎯 业务落盘 2：获取匿名分享元数据逻辑
+     */
+    @Override
+    public Map<String, Object> getShareInfo(String shortLink) {
+        FileShare fileShare = fileShareMapper.selectOne(new LambdaQueryWrapper<FileShare>().eq(FileShare::getShortLink, shortLink));
+        if (fileShare == null) { throw new BusinessException(ResultCode.PARAM_ERROR, "分享资产链路不存在"); }
+        if (fileShare.getExpireTime() != null && fileShare.getExpireTime().isBefore(LocalDateTime.now())) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "该极光分享链接已过期失效");
+        }
+
+        UserFile userFile = userFileMapper.selectById(fileShare.getUserFileId());
+        if (userFile == null || userFile.getDeleted() == 1) { throw new BusinessException(ResultCode.FILE_NOT_FOUND); }
+
+        Map<String, Object> info = new HashMap<>();
+        info.put("fileName", userFile.getFileName());
+        info.put("isDir", userFile.getIsDir());
+        info.put("needCode", fileShare.getExtractionCode() != null);
+        info.put("createTime", fileShare.getCreateTime());
+        return info;
+    }
+
+    /**
+     * 🎯 业务落盘 3：校验提取码逻辑
+     */
+    @Override
+    public void verifyShareCode(String shortLink, String extractionCode) {
+        FileShare fileShare = fileShareMapper.selectOne(new LambdaQueryWrapper<FileShare>().eq(FileShare::getShortLink, shortLink));
+        if (fileShare == null) { throw new BusinessException(ResultCode.PARAM_ERROR, "分享资产链路不存在"); }
+        if (fileShare.getExpireTime() != null && fileShare.getExpireTime().isBefore(LocalDateTime.now())) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "该极光分享链接已过期失效");
+        }
+        if (fileShare.getExtractionCode() != null && !fileShare.getExtractionCode().equals(extractionCode)) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "提取口令错误，拒绝解除密码锁");
+        }
+    }
+
+    /**
+     * 🎯 业务落盘 4：匿名直连高性能流式刷盘下载 (打破鉴权壁垒，直击物理层)
+     */
+    @Override
+    public void anonymousDownload(String shortLink, String extractionCode, HttpServletResponse response) {
+        // 1. 安全风控前置校验
+        FileShare fileShare = fileShareMapper.selectOne(new LambdaQueryWrapper<FileShare>().eq(FileShare::getShortLink, shortLink));
+        if (fileShare == null) { throw new BusinessException(ResultCode.PARAM_ERROR, "分享链接不存在"); }
+        if (fileShare.getExpireTime() != null && fileShare.getExpireTime().isBefore(LocalDateTime.now())) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "链接已失效");
+        }
+        if (fileShare.getExtractionCode() != null && !fileShare.getExtractionCode().equals(extractionCode)) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "防盗刷机制拦截：提取口令不匹配");
+        }
+
+        UserFile userFile = userFileMapper.selectById(fileShare.getUserFileId());
+        if (userFile == null || userFile.getDeleted() == 1) { throw new BusinessException(ResultCode.FILE_NOT_FOUND); }
+        if (userFile.getIsDir()) { throw new BusinessException(ResultCode.PARAM_ERROR, "暂不支持整个文件夹直接匿名下载，请进入后单选文件"); }
+
+        // 2. 物理资产寻址
+        FileInfo fileInfo = fileInfoMapper.selectById(userFile.getFileInfoId());
+        if (fileInfo == null) { throw new BusinessException(ResultCode.FILE_NOT_FOUND, "物理文件索引丢失"); }
+
+        File physicalFile = new File(fileInfo.getFilePath());
+        if (!physicalFile.exists()) { throw new BusinessException(ResultCode.FILE_NOT_FOUND, "玩客云物理磁盘资产丢失"); }
+
+        // 3. 内核级二进制流高吞吐传输大合并
+        try {
+            response.setContentType("application/octet-stream");
+            // 解决跨平台、多浏览器环境下载时中文文件名乱码死穴
+            String encodedName = URLEncoder.encode(userFile.getFileName(), "UTF-8").replaceAll("\\+", "%20");
+            response.setHeader("Content-Disposition", "attachment; filename=\"" + encodedName + "\"");
+            response.setContentLengthLong(physicalFile.length());
+
+            try (FileInputStream fis = new FileInputStream(physicalFile);
+                 OutputStream os = response.getOutputStream()) {
+                byte[] buffer = new byte[8192]; // 8KB 高频缓冲区
+                int len;
+                while ((len = fis.read(buffer)) != -1) {
+                    os.write(buffer, 0, len);
+                }
+                os.flush();
+            }
+            log.info("【极光匿名流控】文件 [{}] 成功匿名推流分发完毕", userFile.getFileName());
+        } catch (IOException e) {
+            log.warn("【极光匿名流控】匿名用户中途断开了文件网络传输流 (Broken Pipe)");
+        }
     }
 }
