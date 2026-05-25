@@ -2,6 +2,7 @@ package com.cloudsphere.netdisk.controller;
 
 import com.cloudsphere.netdisk.common.api.ApiResponse; // 🎯 刚性引入你真实的响应体，根治编译失败
 import com.cloudsphere.netdisk.dto.ShareCreateDTO;
+import com.cloudsphere.netdisk.dto.ShareSaveDTO;
 import com.cloudsphere.netdisk.service.ShareService;
 import com.cloudsphere.netdisk.vo.ShareVO;
 import jakarta.servlet.http.HttpServletResponse;
@@ -65,5 +66,11 @@ public class ShareController {
             @RequestParam(value = "extractionCode", required = false) String extractionCode,
             HttpServletResponse response) {
         shareService.anonymousDownload(shortLink, extractionCode, response);
+    }
+
+    @PostMapping("/save")
+    public ApiResponse<Void> saveToMyDrive(@RequestBody ShareSaveDTO dto) {
+        shareService.saveToMyDrive(dto);
+        return ApiResponse.success();
     }
 }
