@@ -1,0 +1,22 @@
+# 🏡 本地开发测试环境 (Windows)
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://10.1.1.100:3306/cloudsphere_netdisk?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: root_secure_password
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 10
+
+  data:
+    redis:
+      host: 10.1.1.100
+      port: 6379
+      password: redis_secure_password
+      timeout: 5000ms
+
+cloudsphere:
+  upload:
+    storage-path: C:/Users/Raspi/Desktop/cloudsphere/storage
+    temp-path: C:/Users/Raspi/Desktop/cloudsphere/temp

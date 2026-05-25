@@ -1,0 +1,22 @@
+# 🏡 本地开发测试环境 (Windows)
+spring:
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://10.220.2.62:3306/cloudsphere_netdisk?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: admin
+    password: admin
+    hikari:
+      minimum-idle: 5
+      maximum-pool-size: 10
+
+  data:
+    redis:
+      host: 10.220.2.62
+      port: 6379
+      password: admin
+      timeout: 5000ms
+
+cloudsphere:
+  upload:
+    storage-path: C:/Users/NRO/Desktop/cloudsphere/storage
+    temp-path: C:/Users/NRO/Desktop/cloudsphere/temp

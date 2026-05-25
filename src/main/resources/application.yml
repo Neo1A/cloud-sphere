@@ -8,41 +8,14 @@ spring:
   application:
     name: cloudsphere-netdisk
 
-  # 🚀 终极扩容：放开 Tomcat 门阀到 1.5GB，迎接 1GB 完整大文件单兵直传
+  profiles:
+    active: work
+
   servlet:
     multipart:
       enabled: true
       max-file-size: 1500MB
       max-request-size: 1600MB
-
-  # MySQL & Redis 配置保持不动...
-
-  # 顶级节点 2：MySQL 数据源配置
-  datasource:
-    driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://10.1.1.100:3306/cloudsphere_netdisk?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: root
-    password: root_secure_password
-    hikari:
-      minimum-idle: 5
-      maximum-pool-size: 10
-      idle-timeout: 30000
-      max-lifetime: 1800000
-      connection-timeout: 30000
-
-  # 顶级节点 3：Redis 安全连接配置
-  data:
-    redis:
-      host: 10.1.1.100
-      port: 6379
-      password: redis_secure_password
-      timeout: 5000ms
-      lettuce:
-        pool:
-          max-active: 8
-          max-idle: 8
-          min-idle: 0
-          max-wait: -1ms
 
 mybatis-plus:
   configuration:
@@ -58,7 +31,3 @@ cloudsphere:
   jwt:
     secret: cloudsphere_super_secure_random_key_for_jwt_token_generation_2026
     expiration: 86400
-  # 🚀 切换回 Windows 本地桌面全速测试路径
-  upload:
-    storage-path: C:/Users/Raspi/Desktop/cloudsphere/storage
-    temp-path: C:/Users/Raspi/Desktop/cloudsphere/temp
