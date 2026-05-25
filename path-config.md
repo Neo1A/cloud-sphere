@@ -63,22 +63,20 @@ PRIMARY KEY (`id`),
 UNIQUE KEY `uk_identifier_chunk` (`identifier`,`chunk_number`) USING BTREE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='大文件分片临时存储中转表';
 
-DROP TABLE IF EXISTS `file_share`;
 CREATE TABLE `file_share` (
-`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '分享条目自增主键',
-`share_code` varchar(32) NOT NULL COMMENT '提取链接短路由加密令牌 (如 A6B9)',
-`user_id` bigint(20) NOT NULL COMMENT '发起分享的源头租户 ID',
-`user_file_id` bigint(20) NOT NULL COMMENT '被分享的逻辑树节点 ID',
-`share_type` tinyint(4) NOT NULL DEFAULT '0' COMMENT '分享类型(0-凭提取码私密分享, 1-公开无密分享)',
-`password` varchar(10) DEFAULT NULL COMMENT '4位提取码密匙明文',
-`valid_days` int(11) NOT NULL DEFAULT '7' COMMENT '有效时限天数(0代表永久有效)',
-`expire_time` datetime NOT NULL COMMENT '绝对失效临界时间点',
-`click_count` int(11) NOT NULL DEFAULT '0' COMMENT '分享链接转存/点击热度计数器',
-`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '分享创建时间',
-PRIMARY KEY (`id`),
-UNIQUE KEY `uk_share_code` (`share_code`) USING BTREE,
-KEY `idx_user_share` (`user_id`) USING BTREE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='安全时效性私密分享控制表';
+                              `id` BIGINT NOT NULL AUTO_INCREMENT COMMENT '自增主键ID',
+                              `user_id` BIGINT NOT NULL COMMENT '创建分享的用户 ID',
+                              `user_file_id` BIGINT NOT NULL COMMENT '分享的网盘逻辑虚拟文件/文件夹 ID',
+                              `short_link` VARCHAR(20) NOT NULL COMMENT '8位唯一不重复的短链特征码',
+                              `extraction_code` VARCHAR(10) DEFAULT NULL COMMENT '4位随机数字提取口令(null表示免密)',
+                              `expire_time` DATETIME DEFAULT NULL COMMENT '绝对失效时间戳(null表示永久有效)',
+                              `create_time` DATETIME NOT NULL COMMENT '分享链创建时间',
+                              PRIMARY KEY (`id`),
+    -- 🔒 安全大闸：为短链特征码挂载唯一索引（Unique Key），从物理层刚性杜绝短链碰撞冲突
+                              UNIQUE KEY `uk_short_link` (`short_link`),
+    -- ⚡ 性能调优：为用户 ID 设立检索索引，大幅度压低后续拉取“我的分享列表”时的全表扫描耗时
+                              KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='极光网盘-文件资产分享时效表';
 
 SET FOREIGN_KEY_CHECKS = 1;
 
