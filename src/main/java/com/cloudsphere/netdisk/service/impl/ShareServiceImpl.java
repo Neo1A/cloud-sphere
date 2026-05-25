@@ -101,7 +101,7 @@ public class ShareServiceImpl implements ShareService {
     }
 
     /**
-     * 🎯 业务落盘 2：获取匿名分享元数据逻辑
+     * 🎯 业务落盘 2：获取匿名分享元数据逻辑（修复文件大小、失效时间、分享者缺失）
      */
     @Override
     public Map<String, Object> getShareInfo(String shortLink) {
@@ -119,6 +119,25 @@ public class ShareServiceImpl implements ShareService {
         info.put("isDir", userFile.getIsDir());
         info.put("needCode", fileShare.getExtractionCode() != null);
         info.put("createTime", fileShare.getCreateTime());
+
+        // 🟢 核心整流 1：刚性补齐缺失的灵魂字段，供前端头部和弹窗渲染
+        info.put("userId", fileShare.getUserId());
+        info.put("expireTime", fileShare.getExpireTime() != null ?
+                fileShare.getExpireTime().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")) : "永久有效");
+
+        // 🟢 核心整流 2：安全穿透物理层，采用与下载接口一致的寻址逻辑，精准抓取文件真实字节数大小
+        FileInfo fileInfo = fileInfoMapper.selectById(userFile.getFileInfoId());
+        if (fileInfo != null && fileInfo.getFilePath() != null) {
+            File physicalFile = new File(fileInfo.getFilePath());
+            if (physicalFile.exists()) {
+                info.put("fileSize", physicalFile.length()); // 注入物理文件体积
+            } else {
+                info.put("fileSize", 0L);
+            }
+        } else {
+            info.put("fileSize", 0L);
+        }
+
         return info;
     }
 
