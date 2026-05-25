@@ -84,7 +84,7 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
-     * 2. 获取文件目录列表
+     * 2. 获取文件目录列表（已注入文件夹置顶与时间流流控）
      */
     @Override
     public List<FileInfoVO> listFiles(Long parentId) {
@@ -92,10 +92,16 @@ public class FileServiceImpl implements FileService {
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
         validateParentPermission(parentId, userId);
 
+        // 🚀 核心整流大闸：加入物理刚性复合排序
         List<UserFile> userFiles = userFileMapper.selectList(new LambdaQueryWrapper<UserFile>()
                 .eq(UserFile::getUserId, userId)
                 .eq(UserFile::getParentId, parentId)
-                .eq(UserFile::getDeleted, 0));
+                .eq(UserFile::getDeleted, 0)
+                // 1. 第一防线：文件夹始终置顶！
+                // MySQL中，Boolean 类型的 true 映射为 1，false 映射为 0。Desc 降序会让 1（文件夹）无条件排在 0（文件）前面
+                .orderByDesc(UserFile::getIsDir)
+                // 2. 第二防线：同类型资产内部，按照最后修改时间倒序排列（新修改的在最上方）
+                .orderByDesc(UserFile::getUpdateTime));
 
         if (userFiles.isEmpty()) return Collections.emptyList();
 
