@@ -4,7 +4,7 @@ import com.cloudsphere.netdisk.common.annotation.RateLimit;
 import com.cloudsphere.netdisk.common.annotation.RequiresRole;
 import com.cloudsphere.netdisk.common.api.ApiResponse;
 import com.cloudsphere.netdisk.common.constant.UserStatusConstant;
-import com.cloudsphere.netdisk.common.utils.UserContext;
+import com.cloudsphere.netdisk.common.utils.UserContextUtils;
 import com.cloudsphere.netdisk.dto.UserLoginDTO;
 import com.cloudsphere.netdisk.dto.UserRegisterDTO; // 🚀 核心修正：导入全新的企业入职注册 DTO
 import com.cloudsphere.netdisk.service.UserService;
@@ -57,7 +57,7 @@ public class UserController {
     @RequiresRole("ADMIN")
     public ApiResponse<Void> disableUser(@PathVariable Long id) {
         // 从当前绑定的安全无状态拦截上下文中，安全提取执行该行为的管理员 ID
-        Long operatorId = UserContext.getUserId();
+        Long operatorId = UserContextUtils.getUserId();
 
         // 级联下发给 Service 层：目标 ID、禁用状态(0)、操作人 ID
         userService.updateUserStatus(id, UserStatusConstant.DISABLED, operatorId);
@@ -71,7 +71,7 @@ public class UserController {
     @PostMapping("/admin/enable/{id}")
     @RequiresRole("ADMIN")
     public ApiResponse<Void> enableUser(@PathVariable Long id) {
-        Long operatorId = UserContext.getUserId();
+        Long operatorId = UserContextUtils.getUserId();
 
         // 级联下发给 Service 层：目标 ID、启用状态(1)、操作人 ID
         userService.updateUserStatus(id, UserStatusConstant.ENABLED, operatorId);

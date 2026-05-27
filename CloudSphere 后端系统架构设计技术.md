@@ -265,22 +265,48 @@ KEY `idx_dept_id` (`dept_id`)
 -- 修改点：引入 repo_id 将文件归属制从个人绝对剥离，挂载到所属存储库中
 DROP TABLE IF EXISTS `user_file`;
 CREATE TABLE `user_file` (
-`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '虚拟逻辑ID',
-`user_id` bigint(20) NOT NULL COMMENT '逻辑文件所属人ID (上传者创建者)',
-`repo_id` bigint(20) NOT NULL COMMENT '归属的存储库ID(关联storage_repository.id)',
-`file_info_id` bigint(20) DEFAULT NULL COMMENT '关联的物理文件ID (若为文件夹则该字段为 NULL)',
-`file_name` varchar(255) NOT NULL COMMENT '用户自定义的显示名',
-`parent_id` bigint(20) NOT NULL DEFAULT 0 COMMENT '父文件夹ID，0代表该存储库的逻辑根目录',
-`is_dir` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否为文件夹: 0-否, 1-是',
-`deleted` tinyint(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除标识: 0-正常, 1-在回收站中',
-`create_time` datetime NOT NULL COMMENT '创建时间',
-`update_time` datetime NOT NULL COMMENT '修改时间',
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '虚拟逻辑自增主键ID',
+`user_id` bigint(20) NOT NULL COMMENT '物理操作/文件创建所属人ID (用于追溯最终定稿人或物理上传者)',
+`repo_id` bigint(20) NOT NULL COMMENT '灵魂外键：归属的存储库空间ID (关联
+storage_repository.id，统一收拢、区分三大库) [cite: 385]',
+`parent_id` bigint(20) NOT NULL DEFAULT 0 COMMENT '父文件夹ID，0代表当前存储库(公共/某个部门/某个个人)
+的专属逻辑根目录 [cite: 404]',
+`file_name` varchar(255) NOT NULL COMMENT '用户自定义的可视展现文件名 [cite: 404]',
+`is_dir` tinyint NOT NULL DEFAULT 0 COMMENT '是否为文件夹: 0-否, 1-是 (显式去除宽度以绝后患) [cite: 405]',
+`file_info_id` bigint(20) DEFAULT NULL COMMENT '关联的物理文件ID (外键逻辑关联 file_info.id；若为文件夹则该字段恒为
+NULL) [cite: 404]',
+`dept_id` bigint(20) DEFAULT NULL COMMENT '
+历史部门锚定：用于锁死文件创建/上传时员工所属的科室ID，防止人员后续调岗后公盘权限漂移 [cite: 415]',
+`deleted` bigint(20) NOT NULL DEFAULT 0 COMMENT '逻辑删除标识：0-活跃可见；非0(存入当前文件ID)-已入回收站 [cite: 407]',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '虚拟节点创建/上传时间 [cite: 383]',
+`update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '
+虚拟节点最近修改元数据时间 [cite: 383]',
 PRIMARY KEY (`id`),
-KEY `idx_repo_parent` (`repo_id`, `parent_id`),
-KEY `idx_user_id` (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='逻辑虚拟文件树表';
+
+    -- ⚡ 联合唯一索引：刚性阻断同一个存储库、同一个目录下活跃文件的重名行为，且无损释放回收站冲突 [cite: 407, 414]
+                             UNIQUE KEY `uk_repo_parent_name_del` (`repo_id`, `parent_id`, `file_name`, `deleted`) COMMENT '⚡ 联合唯一：控重活跃文件，无损释放回收站冲突 [cite: 407]',
+
+    -- ⚡ 审计与资产清理索引：防止由物理资产反向追溯清理逻辑树，或者按用户审计时发生致命的全表扫描
+                             KEY `idx_user_id` (`user_id`) COMMENT '⚡ 审计索引：高频按上传者进行资产和行为溯源',
+                             KEY `idx_file_info_id` (`file_info_id`) COMMENT '⚡ 反向审计索引：用于物理文件去重及指纹仓资产级联清理 '
+
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='逻辑虚拟文件树表';
 
 SET FOREIGN_KEY_CHECKS = 1;
+
+CREATE TABLE IF NOT EXISTS `upload_session` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键ID',
+`upload_id` varchar(64) NOT NULL COMMENT '大文件哈希标识符',
+`status` varchar(32) NOT NULL DEFAULT 'UPLOADING' COMMENT '状态机指针: UPLOADING, MERGING, DONE',
+`user_id` bigint(20) NOT NULL COMMENT '上传者ID',
+`repo_id` bigint(20) NOT NULL COMMENT '存储库空间ID',
+`dept_id` bigint(20) NOT NULL COMMENT '科室部门ID',
+`create_time` datetime NOT NULL COMMENT '会话构筑时间',
+`update_time` datetime NOT NULL COMMENT '会话更新时间',
+PRIMARY KEY (`id`),
+UNIQUE KEY `uk_upload_id` (`upload_id`),
+KEY `idx_status` (`status`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='分布式并发分片上传状态机会话表';
 
 ## **4\. 核心流控机制与高并发演进算法**
 

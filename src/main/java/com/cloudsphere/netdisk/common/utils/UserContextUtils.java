@@ -1,6 +1,6 @@
 package com.cloudsphere.netdisk.common.utils;
 
-public class UserContext {
+public class UserContextUtils {
 
     private static final ThreadLocal<Long> USER_THREAD_LOCAL = new ThreadLocal<>();
 

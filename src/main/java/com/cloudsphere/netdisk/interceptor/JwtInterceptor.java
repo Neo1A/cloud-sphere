@@ -3,7 +3,7 @@ package com.cloudsphere.netdisk.interceptor;
 import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
 import com.cloudsphere.netdisk.common.utils.JwtUtils;
-import com.cloudsphere.netdisk.common.utils.UserContext;
+import com.cloudsphere.netdisk.common.utils.UserContextUtils;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -55,7 +55,7 @@ public class JwtInterceptor implements HandlerInterceptor {
             Long userId = Long.valueOf(claims.getSubject());
 
             // 5. 绑定上下文
-            UserContext.setUserId(userId);
+            UserContextUtils.setUserId(userId);
             return true;
 
         } catch (JwtException | IllegalArgumentException e) {
@@ -71,6 +71,6 @@ public class JwtInterceptor implements HandlerInterceptor {
     public void afterCompletion(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull Object handler, Exception ex) {
         // 必须规范：强制清空当前线程的 ThreadLocal 数据
         // 在 JDK 26 虚拟线程或 Tomcat 线程池复用模型下，不清理会导致严重的内存泄漏与身份数据串流故障！
-        UserContext.clear();
+        UserContextUtils.clear();
     }
 }

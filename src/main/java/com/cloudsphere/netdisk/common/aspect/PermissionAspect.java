@@ -4,7 +4,7 @@ import com.cloudsphere.netdisk.common.annotation.RequiresRole;
 import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.constant.UserStatusConstant; // 🚀 导入新状态常量
 import com.cloudsphere.netdisk.common.exception.BusinessException;
-import com.cloudsphere.netdisk.common.utils.UserContext;
+import com.cloudsphere.netdisk.common.utils.UserContextUtils;
 import com.cloudsphere.netdisk.entity.User;
 import com.cloudsphere.netdisk.mapper.UserMapper;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +24,7 @@ public class PermissionAspect {
 
     @Before("@annotation(requiresRole)")
     public void doPermissionCheck(JoinPoint joinPoint, RequiresRole requiresRole) {
-        Long userId = UserContext.getUserId();
+        Long userId = UserContextUtils.getUserId();
         if (userId == null) {
             throw new BusinessException(ResultCode.UNAUTHORIZED);
         }

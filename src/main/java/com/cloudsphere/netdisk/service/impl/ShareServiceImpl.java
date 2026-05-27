@@ -3,15 +3,15 @@ package com.cloudsphere.netdisk.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
-import com.cloudsphere.netdisk.common.utils.UserContext;
+import com.cloudsphere.netdisk.common.utils.UserContextUtils;
 import com.cloudsphere.netdisk.dto.ShareCreateDTO;
 import com.cloudsphere.netdisk.dto.ShareSaveDTO;
+import com.cloudsphere.netdisk.entity.FileInfo;
 import com.cloudsphere.netdisk.entity.FileShare;
 import com.cloudsphere.netdisk.entity.UserFile;
-import com.cloudsphere.netdisk.entity.FileInfo;
+import com.cloudsphere.netdisk.mapper.FileInfoMapper;
 import com.cloudsphere.netdisk.mapper.FileShareMapper;
 import com.cloudsphere.netdisk.mapper.UserFileMapper;
-import com.cloudsphere.netdisk.mapper.FileInfoMapper;
 import com.cloudsphere.netdisk.service.ShareService;
 import com.cloudsphere.netdisk.vo.ShareVO;
 import jakarta.servlet.http.HttpServletResponse;
@@ -44,7 +44,7 @@ public class ShareServiceImpl implements ShareService {
 
     @Override
     public ShareVO createShare(ShareCreateDTO dto) {
-        Long userId = UserContext.getUserId();
+        Long userId = UserContextUtils.getUserId();
 
         UserFile userFile = userFileMapper.selectOne(new LambdaQueryWrapper<UserFile>()
                 .eq(UserFile::getId, dto.getUserFileId())
@@ -233,7 +233,7 @@ public class ShareServiceImpl implements ShareService {
     @Transactional(rollbackFor = Exception.class)
     public void saveToMyDrive(ShareSaveDTO dto) {
         // 1. 获取当前登录转存发起者的租户 ID (从 JWT 上下文中强行召回)
-        Long currentUserId = UserContext.getUserId();
+        Long currentUserId = UserContextUtils.getUserId();
         if (currentUserId == null) {
             throw new BusinessException(ResultCode.UNAUTHORIZED, "登录凭证失效，请先登录极光网盘");
         }

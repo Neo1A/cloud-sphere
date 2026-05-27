@@ -3,26 +3,26 @@ package com.cloudsphere.netdisk.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
-import com.cloudsphere.netdisk.common.utils.UserContext;
+import com.cloudsphere.netdisk.common.utils.UserContextUtils;
+import com.cloudsphere.netdisk.dto.FolderCreateDTO;
 import com.cloudsphere.netdisk.entity.FileInfo;
 import com.cloudsphere.netdisk.entity.UserFile;
 import com.cloudsphere.netdisk.mapper.FileInfoMapper;
 import com.cloudsphere.netdisk.mapper.UserFileMapper;
 import com.cloudsphere.netdisk.service.FileService;
 import com.cloudsphere.netdisk.vo.FileInfoVO;
-import com.cloudsphere.netdisk.dto.FolderCreateDTO;
+import jakarta.annotation.PostConstruct;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import jakarta.annotation.PostConstruct;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.io.OutputStream;
+import java.io.RandomAccessFile;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -57,7 +57,7 @@ public class FileServiceImpl implements FileService {
      */
     @Override
     public void createFolder(FolderCreateDTO dto) {
-        Long userId = UserContext.getUserId();
+        Long userId = UserContextUtils.getUserId();
         validateParentPermission(dto.getParentId(), userId);
 
         UserFile duplicate = userFileMapper.selectOne(new LambdaQueryWrapper<UserFile>()
@@ -88,7 +88,7 @@ public class FileServiceImpl implements FileService {
      */
     @Override
     public List<FileInfoVO> listFiles(Long parentId) {
-        Long userId = UserContext.getUserId();
+        Long userId = UserContextUtils.getUserId();
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
         validateParentPermission(parentId, userId);
 
@@ -137,7 +137,7 @@ public class FileServiceImpl implements FileService {
      */
     @Override
     public void uploadPhysicalFile(MultipartFile file, String sha256, Long parentId, String fileName) {
-        Long userId = UserContext.getUserId();
+        Long userId = UserContextUtils.getUserId();
         validateParentPermission(parentId, userId);
 
         if (file.isEmpty()) {
@@ -181,7 +181,7 @@ public class FileServiceImpl implements FileService {
      */
     @Override
     public void deleteFile(Long fileId) {
-        Long userId = UserContext.getUserId();
+        Long userId = UserContextUtils.getUserId();
         UserFile vf = userFileMapper.selectById(fileId);
 
         if (vf == null || !vf.getUserId().equals(userId)) {
@@ -212,7 +212,7 @@ public class FileServiceImpl implements FileService {
     @Override
     public void downloadFileStream(Long fileId, HttpServletRequest request, HttpServletResponse response) {
         // 🛡️ 阻断关卡 1：抓取安全上下文，判定当前登录的用户 ID
-        Long userId = UserContext.getUserId();
+        Long userId = UserContextUtils.getUserId();
 
         // 🛡️ 阻断关卡 2：防越权总闸！强制要求此逻辑文件不仅存在，还必须归属于当前用户
         UserFile virtualFile = userFileMapper.selectOne(new LambdaQueryWrapper<UserFile>()
@@ -341,7 +341,7 @@ public class FileServiceImpl implements FileService {
      */
     @Override
     public void downloadFolderStream(Long folderId, HttpServletResponse response) {
-        Long userId = UserContext.getUserId();
+        Long userId = UserContextUtils.getUserId();
 
         // 🛡️ 1. 防越权总闸：判定当前选中的目录是否存在且必须归属于该用户
         UserFile rootFolder = userFileMapper.selectOne(new LambdaQueryWrapper<UserFile>()
