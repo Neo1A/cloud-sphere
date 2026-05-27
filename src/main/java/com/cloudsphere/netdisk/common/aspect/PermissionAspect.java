@@ -2,6 +2,7 @@ package com.cloudsphere.netdisk.common.aspect;
 
 import com.cloudsphere.netdisk.common.annotation.RequiresRole;
 import com.cloudsphere.netdisk.common.api.ResultCode;
+import com.cloudsphere.netdisk.common.constant.UserStatusConstant; // 🚀 导入新状态常量
 import com.cloudsphere.netdisk.common.exception.BusinessException;
 import com.cloudsphere.netdisk.common.utils.UserContext;
 import com.cloudsphere.netdisk.entity.User;
@@ -25,7 +26,6 @@ public class PermissionAspect {
     public void doPermissionCheck(JoinPoint joinPoint, RequiresRole requiresRole) {
         Long userId = UserContext.getUserId();
         if (userId == null) {
-            // 🚀 核心修正：直接传入 UNAUTHORIZED
             throw new BusinessException(ResultCode.UNAUTHORIZED);
         }
 
@@ -34,11 +34,17 @@ public class PermissionAspect {
             throw new BusinessException(ResultCode.USER_NOT_FOUND);
         }
 
+        // ==================== 🎯 核心重构：打补丁升级状态强锁拦截 ====================
+        if (user.getStatus() == null || user.getStatus() != UserStatusConstant.ENABLED) {
+            log.warn("【安全熔断】冻结账户/非激活员工 ID:[{}] 工号:[{}] 企图盗刷核心业务接口，切面刚性阻断！",
+                    userId, user.getUsername());
+            throw new BusinessException(ResultCode.USER_DISABLED); // 触发 1004 异常
+        }
+        // =========================================================================
+
         String requiredRole = requiresRole.value();
         if (!requiredRole.equalsIgnoreCase(user.getRole())) {
             log.warn("【纵向越权硬阻断】用户 ID:[{}] 企图越权盗刷 [{}] 级别接口", userId, requiredRole);
-
-            // 🚀 核心修正：直接传入 FORBIDDEN
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
     }

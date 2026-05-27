@@ -19,9 +19,12 @@ public interface UserService {
      */
     String login(String username, String password);
 
-    // UserService 接口添加方法
-
     /**
-     * 用户禁用
+     * 变更企业员工账户生命周期状态（商用级风控重构版）
+     * @param id         目标员工的用户主键 ID
+     * @param status     演进状态：0 - 禁用，1 - 启用 (参考 UserStatusConstant)
+     * @param operatorId 当前在上下文执行操作的管理员物理用户 ID
      */
+    void updateUserStatus(Long id, Integer status, Long operatorId);
+
 }

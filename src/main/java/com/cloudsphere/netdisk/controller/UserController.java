@@ -3,6 +3,8 @@ package com.cloudsphere.netdisk.controller;
 import com.cloudsphere.netdisk.common.annotation.RateLimit;
 import com.cloudsphere.netdisk.common.annotation.RequiresRole;
 import com.cloudsphere.netdisk.common.api.ApiResponse;
+import com.cloudsphere.netdisk.common.constant.UserStatusConstant;
+import com.cloudsphere.netdisk.common.utils.UserContext;
 import com.cloudsphere.netdisk.dto.UserLoginDTO;
 import com.cloudsphere.netdisk.dto.UserRegisterDTO; // 🚀 核心修正：导入全新的企业入职注册 DTO
 import com.cloudsphere.netdisk.service.UserService;
@@ -47,5 +49,33 @@ public class UserController {
         return ApiResponse.success("【极光网盘内核报告】全矿数字化仓储存储池状态健康，底层分布式存储引擎读写完美。");
     }
 
+    /**
+     * 4. 禁用/冻结企业员工账户
+     * 权限安全防护闸：唯有系统最高超级管理员（ADMIN）准许封禁员工通行证
+     */
+    @PostMapping("/admin/disable/{id}")
+    @RequiresRole("ADMIN")
+    public ApiResponse<Void> disableUser(@PathVariable Long id) {
+        // 从当前绑定的安全无状态拦截上下文中，安全提取执行该行为的管理员 ID
+        Long operatorId = UserContext.getUserId();
+
+        // 级联下发给 Service 层：目标 ID、禁用状态(0)、操作人 ID
+        userService.updateUserStatus(id, UserStatusConstant.DISABLED, operatorId);
+        return ApiResponse.success();
+    }
+
+    /**
+     * 5. 启用/解冻企业员工账户
+     * 权限安全防护闸：唯有系统最高超级管理员（ADMIN）准许修复解冻员工通行证
+     */
+    @PostMapping("/admin/enable/{id}")
+    @RequiresRole("ADMIN")
+    public ApiResponse<Void> enableUser(@PathVariable Long id) {
+        Long operatorId = UserContext.getUserId();
+
+        // 级联下发给 Service 层：目标 ID、启用状态(1)、操作人 ID
+        userService.updateUserStatus(id, UserStatusConstant.ENABLED, operatorId);
+        return ApiResponse.success();
+    }
 
 }

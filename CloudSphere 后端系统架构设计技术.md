@@ -199,6 +199,89 @@ KEY `idx_user_file` (`user_id`, `user_file_id`)
 
 SET FOREIGN_KEY_CHECKS = 1;
 
+SET FOREIGN_KEY_CHECKS = 0;
+
+1. 新增：矿业集团科室部门表 (从已有个人制切向企业部门制)
+
+DROP TABLE IF EXISTS `department`;
+CREATE TABLE `department` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '部门/科室自增主键ID',
+`dept_name` varchar(128) NOT NULL COMMENT '科室名称(如：采掘科、安监部、机运科)',
+`parent_id` bigint(20) NOT NULL DEFAULT 0 COMMENT '父级部门ID(支持无限层级科层，根部门为0)',
+PRIMARY KEY (`id`),
+KEY `idx_parent_id` (`parent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='企业组织架构-部门科室表';
+
+-- 2. 新增：副矿长分管科室关联表 (满足副矿长可以分管多个部门的诉求)
+
+DROP TABLE IF EXISTS `dept_vice_director_relation`;
+CREATE TABLE `dept_vice_director_relation` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键ID',
+`vice_director_user_id` bigint(20) NOT NULL COMMENT '副矿长的用户ID(对应user.id)',
+`dept_id` bigint(20) NOT NULL COMMENT '其分管的科室部门ID(对应department.id)',
+PRIMARY KEY (`id`),
+UNIQUE KEY `uk_director_dept` (`vice_director_user_id`, `dept_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='副矿长分管科室多对多关联表';
+
+-- 3. 新增：公共/部门存储库表 (确立两级多模协作存储空间)
+
+DROP TABLE IF EXISTS `storage_repository`;
+CREATE TABLE `storage_repository` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '存储库空间唯一自增主键ID',
+`repo_name` varchar(128) NOT NULL COMMENT '存储库空间展现名(如：全矿安全标准公盘、机运科私享协作库)',
+`repo_type` tinyint(1) NOT NULL DEFAULT 2 COMMENT '存储库制式类型: 1-公共存储库(全员准入/受控修改), 2-部门存储库(
+科室行政专属隔离区)',
+`dept_id` bigint(20) DEFAULT NULL COMMENT '关联所属部门科室ID(外键逻辑对应 department.id)。若 repo_type=1 则此字段恒为
+NULL 或 0；若 repo_type=2 则强约束不可为空',
+`status` tinyint(1) NOT NULL DEFAULT 1 COMMENT '存储库活性状态: 1-正常启用, 0-封存/禁用锁死(锁死后全员只读或不可见)',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '空间开辟与数字化建档时间',
+`update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '空间配置元数据最近变更时间',
+PRIMARY KEY (`id`),
+KEY `idx_dept_id` (`dept_id`) COMMENT '⚡ 级联索引：用于在部门/科室树调整时，极速反查、反向聚合出对应的部门专属库',
+KEY `idx_type_status` (`repo_type`, `status`) COMMENT '⚡ 复合高防索引：用于主大厅左侧边栏高频拉取“活性公共公盘列表”时，强力阻断全表扫描'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='企业协同温区-公共/部门多模协作存储库空间表';
+
+-- 4. 升级：用户员工认证表 (基于当前 user 表改造扩充)
+
+-- 修改点：引入 dept_id 锚定科室，扩充角色类型至矿业五大岗位角色
+DROP TABLE IF EXISTS `user`;
+CREATE TABLE `user` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '全局唯一用户ID',
+`username` varchar(50) NOT NULL COMMENT '工号/用户名',
+`password` varchar(64) NOT NULL COMMENT 'SHA-256加盐哈希密码',
+`real_name` varchar(64) NOT NULL COMMENT '员工真实姓名',
+`dept_id` bigint(20) DEFAULT NULL COMMENT '所属科室ID(外键关联department.id)',
+`role` varchar(32) NOT NULL DEFAULT 'USER' COMMENT '角色权限: ADMIN(管理员), MINER_DIRECTOR(矿长), VICE_DIRECTOR(
+副矿长), SECTION_CHIEF(科长), USER(常规个人)',
+`create_time` datetime NOT NULL COMMENT '注册时间',
+`update_time` datetime NOT NULL COMMENT '更新时间',
+PRIMARY KEY (`id`),
+UNIQUE KEY `uk_username` (`username`),
+KEY `idx_dept_id` (`dept_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户员工主表';
+
+-- 5. 升级：逻辑文件虚拟挂载目录树表 (基于当前 user_file 表改造扩充)
+
+-- 修改点：引入 repo_id 将文件归属制从个人绝对剥离，挂载到所属存储库中
+DROP TABLE IF EXISTS `user_file`;
+CREATE TABLE `user_file` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '虚拟逻辑ID',
+`user_id` bigint(20) NOT NULL COMMENT '逻辑文件所属人ID (上传者创建者)',
+`repo_id` bigint(20) NOT NULL COMMENT '归属的存储库ID(关联storage_repository.id)',
+`file_info_id` bigint(20) DEFAULT NULL COMMENT '关联的物理文件ID (若为文件夹则该字段为 NULL)',
+`file_name` varchar(255) NOT NULL COMMENT '用户自定义的显示名',
+`parent_id` bigint(20) NOT NULL DEFAULT 0 COMMENT '父文件夹ID，0代表该存储库的逻辑根目录',
+`is_dir` tinyint(1) NOT NULL DEFAULT 0 COMMENT '是否为文件夹: 0-否, 1-是',
+`deleted` tinyint(1) NOT NULL DEFAULT 0 COMMENT '逻辑删除标识: 0-正常, 1-在回收站中',
+`create_time` datetime NOT NULL COMMENT '创建时间',
+`update_time` datetime NOT NULL COMMENT '修改时间',
+PRIMARY KEY (`id`),
+KEY `idx_repo_parent` (`repo_id`, `parent_id`),
+KEY `idx_user_id` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='逻辑虚拟文件树表';
+
+SET FOREIGN_KEY_CHECKS = 1;
+
 ## **4\. 核心流控机制与高并发演进算法**
 
 ### **4.1 秒传（Instant Linker）极速流控**

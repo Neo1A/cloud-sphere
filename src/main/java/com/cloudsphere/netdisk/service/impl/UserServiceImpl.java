@@ -2,6 +2,7 @@ package com.cloudsphere.netdisk.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.cloudsphere.netdisk.common.api.ResultCode;
+import com.cloudsphere.netdisk.common.constant.UserStatusConstant;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
 import com.cloudsphere.netdisk.common.utils.JwtUtils;
 import com.cloudsphere.netdisk.entity.User;
@@ -101,6 +102,50 @@ public class UserServiceImpl implements UserService {
         // 注意：由于底层安全过滤器 Interceptor 拦截时需要从 Token 中还原岗位与科室进行 ACL 熔断判定，
         // 建议后续按需扩展 JwtUtils.generateToken 方法，将 user.getRole() 和 user.getDeptId() 存入 Claims 载荷中。
         return jwtUtils.generateToken(user.getId(), user.getUsername());
+    }
+
+    /**
+     * 3. 变更企业员工账户生命周期状态（商用级风控重构版）
+     */
+    @Override
+    @org.springframework.transaction.annotation.Transactional(rollbackFor = Exception.class) // 注入事务链
+    public void updateUserStatus(Long id, Integer status, Long operatorId) {
+        // 3.1 刚性边界值检查
+        if (status == null || (status != UserStatusConstant.DISABLED && status != UserStatusConstant.ENABLED)) {
+            log.error("状态变更阻断：非法的状态参数标记值 [{}]", status);
+            throw new BusinessException(ResultCode.PARAM_ERROR, "非法的状态变更标记");
+        }
+
+        // 3.2 超级风控熔断锁：最高管理员绝对禁止封禁自己，防止把自己锁死在外面的重大生产故障
+        if (status == UserStatusConstant.DISABLED && id.equals(operatorId)) {
+            log.warn("【风控熔断触发】超级管理员 ID:[{}] 尝试在后台禁用自身账户，系统刚性拦截！", operatorId);
+            throw new BusinessException(ResultCode.PARAM_ERROR, "风控安全警告：系统禁止管理员执行注销或禁用自身的操作");
+        }
+
+        // 3.3 检索目标对象建档信息
+        User targetUser = userMapper.selectById(id);
+        if (targetUser == null) {
+            log.warn("状态变更失败：目标员工用户 ID:[{}] 在系统中不存在", id);
+            throw new BusinessException(ResultCode.USER_NOT_FOUND);
+        }
+
+        // 3.4 状态幂等审查：若当前库内状态已与目标状态重合，直接无损返回，避免高频磁盘 I/O 刷盘
+        if (targetUser.getStatus() != null && targetUser.getStatus().equals(status)) {
+            log.info("状态变更忽略：目标员工工号:[{}] 状态当前已为 {}, 自动触发幂等退回", targetUser.getUsername(), status);
+            return;
+        }
+
+        // 3.5 构造干净实体执行 MyBatis-Plus 局部更新
+        User updateUser = new User();
+        // 如果目前实体的 id 还是 int，在此处进行安全收拢强转：updateUser.setId(id.intValue());
+        updateUser.setId(id.intValue());
+        updateUser.setStatus(status);
+        updateUser.setUpdateTime(LocalDateTime.now());
+
+        userMapper.updateById(updateUser);
+
+        log.info("【企业员工状态变更成功】操作人ADMIN-ID:[{}], 目标员工工号:[{}], 姓名:[{}], 状态演进:[{}] -> [{}]",
+                operatorId, targetUser.getUsername(), targetUser.getRealName(), targetUser.getStatus(), status);
     }
 
 }
