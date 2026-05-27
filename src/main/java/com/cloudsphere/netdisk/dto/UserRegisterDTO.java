@@ -1,5 +1,6 @@
 package com.cloudsphere.netdisk.dto;
 
+import com.cloudsphere.netdisk.common.enums.RoleEnum;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
@@ -22,6 +23,7 @@ public class UserRegisterDTO {
     @NotNull(message = "所属科室部门ID不能为空")
     private Long deptId;
 
-    @NotBlank(message = "行政职能岗位角色不能为空")
-    private String role; // 白名单：ADMIN, MINER_DIRECTOR, VICE_DIRECTOR, SECTION_CHIEF, USER
+    @NotNull(message = "行政职能岗位角色不能为空")
+//  private String role; // 白名单：ADMIN, MINER_DIRECTOR, VICE_DIRECTOR, SECTION_CHIEF, USER
+    private RoleEnum role;
 }

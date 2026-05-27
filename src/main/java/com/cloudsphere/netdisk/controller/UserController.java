@@ -26,7 +26,7 @@ public class UserController {
     @RateLimit(count = 3)
     public ApiResponse<Void> register(@Validated @RequestBody UserRegisterDTO dto) { // 🚀 升级为 UserRegisterDTO
         // 级联透传：工号、密码、真实姓名、所属科室ID、行政岗位角色
-        userService.register(dto.getUsername(), dto.getPassword(), dto.getRealName(), dto.getDeptId(), dto.getRole());
+        userService.register(dto.getUsername(), dto.getPassword(), dto.getRealName(), dto.getDeptId(), dto.getRole().getCode());
         return ApiResponse.success();
     }
 
@@ -46,4 +46,6 @@ public class UserController {
     public ApiResponse<String> systemMonitor() {
         return ApiResponse.success("【极光网盘内核报告】全矿数字化仓储存储池状态健康，底层分布式存储引擎读写完美。");
     }
+
+
 }

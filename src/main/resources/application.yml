@@ -1,21 +1,22 @@
 server:
-  port: 8080
+  port: 8000
   tomcat:
     threads:
       max: 200
+  address: 0.0.0.0
 
 spring:
   application:
     name: cloudsphere-netdisk
 
   profiles:
-    active: home
+    active: work
 
   servlet:
     multipart:
       enabled: true
-      max-file-size: 1500MB
-      max-request-size: 1600MB
+      max-file-size: 5000MB
+      max-request-size: 5000MB
 
 mybatis-plus:
   configuration:

@@ -9,12 +9,13 @@ import java.time.LocalDateTime;
 @TableName("user")
 public class User {
 
-    private long id;
+    private int id;
     private String username;
     private String password;
     private String realName;
     private long deptId;
     private String role;
+    private Integer status;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;
 

@@ -2,22 +2,22 @@
 spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://10.220.2.62:3306/cloudsphere_netdisk?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-    username: root
-    password: root_secure_password
+    url: jdbc:mysql://localhost:3306/cloudsphere_netdisk?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: admin
+    password: admin
     hikari:
       minimum-idle: 10
       maximum-pool-size: 30 # 物理服务器可以适当调高连接池上限提升高并发吞吐量
 
   data:
     redis:
-      host: 10.220.2.62
+      host: localhost
       port: 6379
-      password: redis_secure_password
+      password: admin
       timeout: 5000ms
 
 cloudsphere:
   upload:
     # 物理机 Linux 下的持久化存储路径
-    storage-path: /var/lib/cloudsphere/storage
-    temp-path: /var/lib/cloudsphere/temp
+    storage-path: /home/service/cloudsphere/storage
+    temp-path: /home/service/cloudsphere/temp

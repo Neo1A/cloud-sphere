@@ -71,61 +71,133 @@
 
 ## **3\. 数据库物理拓扑 Schema DDL**
 
-\-- 1\. 用户基本账户表
+SET FOREIGN_KEY_CHECKS = 0;
 
-CREATE TABLE \`user\` (  
-  \`id\` bigint NOT NULL AUTO\_INCREMENT COMMENT '主键ID',  
-  \`username\` varchar(64) NOT NULL COMMENT '唯一用户名',  
-  \`password\` varchar(128) NOT NULL COMMENT '加盐哈希密码密文',  
-  \`salt\` varchar(64) DEFAULT NULL COMMENT '密码哈希安全盐',  
-  \`role\` varchar(32) DEFAULT 'USER' COMMENT '角色权限标识(USER/ADMIN)',  
-  \`create\_time\` datetime DEFAULT CURRENT\_TIMESTAMP COMMENT '注册时间戳',  
-  PRIMARY KEY (\`id\`),  
-  UNIQUE KEY \`uk\_username\` (\`username\`)  
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4\_general\_ci;
+-- ====================================================================
+-- 1. 组织架构：矿业集团科室部门表
+-- ====================================================================
+DROP TABLE IF EXISTS `department`;
+CREATE TABLE `department` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '部门/科室自增主键ID',
+`dept_name` varchar(128) NOT NULL COMMENT '科室名称(如：采掘科、安监部、机运科)',
+`parent_id` bigint(20) NOT NULL DEFAULT 0 COMMENT '父级部门ID(根部门为0，应用层需特殊处理0节点的自连接逻辑)',
+PRIMARY KEY (`id`),
+KEY `idx_parent_id` (`parent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='企业组织架构-部门科室表';
 
-\-- 2\. 物理资产表（极光物理共享温区）  
-CREATE TABLE \`file\_info\` (  
-  \`id\` bigint NOT NULL AUTO\_INCREMENT COMMENT '物理存储映射主键',  
-  \`file\_identifier\` varchar(64) NOT NULL COMMENT '文件内容全局唯一 SHA-256 安全指纹',  
-  \`file\_path\` varchar(512) NOT NULL COMMENT '物理磁盘绝对存储路径',  
-  \`file\_size\` bigint NOT NULL COMMENT '文件大小(单位:字节)',  
-  \`file\_suffix\` varchar(32) DEFAULT NULL COMMENT '真实文件后缀名',  
-  \`ref\_count\` int DEFAULT '1' COMMENT '共享池软引用计数器',  
-  \`create\_time\` datetime DEFAULT CURRENT\_TIMESTAMP COMMENT '物理首次落盘时间',  
-  PRIMARY KEY (\`id\`),  
-  UNIQUE KEY \`uk\_identifier\` (\`file\_identifier\`)  
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4\_general\_ci;
+-- ====================================================================
+-- 2. 特权层级映射：副矿长多部门分管关联表
+-- ====================================================================
+DROP TABLE IF EXISTS `dept_vice_director_relation`;
+CREATE TABLE `dept_vice_director_relation` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键ID',
+`vice_director_user_id` bigint(20) NOT NULL COMMENT '副矿长的用户ID(对应user.id)',
+`dept_id` bigint(20) NOT NULL COMMENT '其分管的科室部门ID(对应department.id)',
+PRIMARY KEY (`id`),
+UNIQUE KEY `uk_director_dept` (`vice_director_user_id`, `dept_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='副矿长分管科室多对多关联表';
 
-\-- 3\. 多租户逻辑虚拟目录树表  
-CREATE TABLE \`user\_file\` (  
-  \`id\` bigint NOT NULL AUTO\_INCREMENT COMMENT '虚拟逻辑主键',  
-  \`user\_id\` bigint NOT NULL COMMENT '租户用户主键',  
-  \`file\_info\_id\` bigint DEFAULT NULL COMMENT '物理映射主键 (为文件夹时该值为Null)',  
-  \`file\_name\` varchar(256) NOT NULL COMMENT '用户可视层文件名/文件夹名',  
-  \`parent\_id\` bigint NOT NULL DEFAULT '0' COMMENT '父级虚拟节点ID (0代表虚拟根目录)',  
-  \`is\_dir\` tinyint(1) NOT NULL DEFAULT '0' COMMENT '虚拟节点类型 (1:文件夹, 0:常规物理文件)',  
-  \`deleted\` tinyint DEFAULT '0' COMMENT '软回收站标记 (1:已丢入回收站, 0:活性展示)',  
-  \`create\_time\` datetime DEFAULT CURRENT\_TIMESTAMP COMMENT '节点创建时间',  
-  \`update\_time\` datetime DEFAULT CURRENT\_TIMESTAMP ON UPDATE CURRENT\_TIMESTAMP COMMENT '最后活跃修改时间',  
-  PRIMARY KEY (\`id\`),  
-  KEY \`idx\_user\_parent\` (\`user\_id\`, \`parent\_id\`),  
-  KEY \`idx\_file\_info\` (\`file\_info\_id\`)  
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4\_general\_ci;
+-- ====================================================================
+-- 3. 协作温区容器：三维隔离企业协作存储空间表
+-- ====================================================================
+DROP TABLE IF EXISTS `storage_repository`;
+CREATE TABLE `storage_repository` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '存储库空间唯一自增主键ID',
+`repo_name` varchar(128) NOT NULL COMMENT '存储库可视展现名(如：全矿安全标准公盘)',
+-- 🚀 修复：彻底废弃 tinyint(1)，防止 Java JDBC 驱动误将其反序列化为 Boolean 导致 2和3 无法识别而崩溃
+`repo_type` tinyint NOT NULL COMMENT '存储库隔离制式: 1-公共存储库(全局仅一个), 2-部门存储库, 3-个人存储库',
+`dept_id` bigint(20) NOT NULL DEFAULT 0 COMMENT '关联科室部门ID (仅在 repo_type=2 部门库时有效；1和3时默认为0)',
+`user_id` bigint(20) NOT NULL DEFAULT 0 COMMENT '关联专属员工ID (仅在 repo_type=3 个人库时有效；1和2时默认为0)',
+-- 🚀 修复：状态位 tinyint(1) 升级为 tinyint，保障应用层 ORM 框架整型状态机的顺畅判定
+`status` tinyint NOT NULL DEFAULT 1 COMMENT '空间状态: 1-正常启用, 0-封存禁用(触发冷流只读熔断)',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '空间开辟时间',
+`update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '元数据变更时间',
+PRIMARY KEY (`id`),
+-- 🚀 修复：利用联合唯一索引进行底盘刚性拦截。当 repo_type=1 且 dept_id/user_id 为0时，在物理上锁死全局只能存在一个公共库
+UNIQUE KEY `uk_repo_integrity` (`repo_type`, `dept_id`, `user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='企业协同温区-三维隔离协作存储空间表';
 
-\-- 4\. 匿名与安全临时分享控制表  
-CREATE TABLE \`file\_share\` (  
-  \`id\` bigint NOT NULL AUTO\_INCREMENT COMMENT '分享记录主键',  
-  \`share\_code\` varchar(64) NOT NULL COMMENT '全局唯一匿名短码提取凭证(8位随机安全字符)',  
-  \`user\_id\` bigint NOT NULL COMMENT '创建者用户主键',  
-  \`user\_file\_id\` bigint NOT NULL COMMENT '指向被分享的逻辑节点ID',  
-  \`need\_extraction\` tinyint(1) NOT NULL DEFAULT '0' COMMENT '是否开启提取密码防护 (1:是, 0:免密)',  
-  \`extraction\_code\` varchar(16) DEFAULT NULL COMMENT '4位提取口令密文',  
-  \`expire\_time\` datetime NOT NULL COMMENT '生命周期结束封印时间戳',  
-  \`create\_time\` datetime DEFAULT CURRENT\_TIMESTAMP COMMENT '分享发起时间',  
-  PRIMARY KEY (\`id\`),  
-  UNIQUE KEY \`uk\_share\_code\` (\`share\_code\`)  
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4\_general\_ci;
+-- ====================================================================
+-- 4. 账户中心：用户员工认证主表
+-- ====================================================================
+DROP TABLE IF EXISTS `user`;
+CREATE TABLE `user` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '全局唯一用户ID',
+`username` varchar(50) NOT NULL COMMENT '工号/用户名',
+`password` varchar(64) NOT NULL COMMENT 'SHA-256加盐哈希密码',
+`real_name` varchar(64) NOT NULL COMMENT '员工真实姓名',
+`dept_id` bigint(20) DEFAULT NULL COMMENT '所属科室ID(关联department.id)',
+`role` varchar(32) NOT NULL DEFAULT 'USER' COMMENT '行政岗位: ADMIN-管理员, MINER_DIRECTOR-矿长, VICE_DIRECTOR-副矿长, SECTION_CHIEF-科长, USER-常规个人',
+-- 🚀 修复：状态位 tinyint(1) 升级为 tinyint
+`status` tinyint NOT NULL DEFAULT 1 COMMENT '账户状态: 1-正常在职, 0-冻结离职',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '数字化建档时间',
+`update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '元数据刷新时间',
+PRIMARY KEY (`id`),
+UNIQUE KEY `uk_username` (`username`),
+KEY `idx_dept_id` (`dept_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='用户员工主表';
+
+-- ====================================================================
+-- 5. 虚拟控制树：逻辑多模虚拟文件目录树表
+-- ====================================================================
+DROP TABLE IF EXISTS `user_file`;
+CREATE TABLE `user_file` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '虚拟逻辑自增ID',
+`user_id` bigint(20) NOT NULL COMMENT '逻辑文件操作/上传创建者ID (用于事后合规责任溯源)',
+`dept_id` bigint(20) NOT NULL COMMENT '文件开辟时的初始组织归属部门ID（对应 user.dept_id，锁死上传时刻部门上下级，防调岗权限漂移）',
+`repo_id` bigint(20) NOT NULL COMMENT '归属的存储库空间容器ID (关联 storage_repository.id)',
+`file_info_id` bigint(20) DEFAULT NULL COMMENT '灵魂外键：关联的物理文件唯一自增ID (指向物理资产仓 file_info.id，文件夹时为 NULL)',
+`file_name` varchar(255) NOT NULL COMMENT '用户自定义的可视文件名',
+`parent_id` bigint(20) NOT NULL DEFAULT 0 COMMENT '父文件夹ID，0代表当前存储空间的逻辑根目录',
+-- 🚀 修复：is_dir 升级为 tinyint，消除特定 ORM 框架下布尔强转引发的阻断
+`is_dir` tinyint NOT NULL DEFAULT 0 COMMENT '是否为文件夹: 0-普通物理文件, 1-虚拟目录文件夹',
+`deleted` bigint(20) NOT NULL DEFAULT 0 COMMENT '删除定位：0-活性可见；非0(存储当前记录id)-已移入回收站，保障无损同名共存',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '文件挂载创建时间',
+`update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '重命名/逻辑移动时间',
+PRIMARY KEY (`id`),
+-- 🚀 修复：砍掉原先冗余的单独前缀索引，直接以联合唯一索引作为最左前缀覆盖大厅列表拉取。
+UNIQUE KEY `uk_repo_parent_name_del` (`repo_id`, `parent_id`, `file_name`, `deleted`),
+-- 🚀 修复：补齐物理资产反向穿透索引。当执行“物理清除/秒传引用计数比对”时，彻底消灭全表扫描，将 I/O 压制到 O(log N)
+KEY `idx_file_info_id` (`file_info_id`),
+KEY `idx_user_dept` (`user_id`, `dept_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='逻辑虚拟文件树表';
+
+-- ====================================================================
+-- 6. 物理指纹池：去重物理文件实体信息表（补充补齐点7缺失表）
+-- ====================================================================
+DROP TABLE IF EXISTS `file_info`;
+CREATE TABLE `file_info` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '物理文件唯一自增ID',
+`file_identifier` varchar(64) NOT NULL COMMENT '文件的 SHA-256 全局唯一哈希指纹（用于秒传去重高空拦截）',
+`file_path` varchar(500) NOT NULL COMMENT '在玩客云外置盘/对象存储桶中的绝对物理存储路径',
+`file_size` bigint(20) NOT NULL COMMENT '物理文件大小(字节 Byte)',
+`file_suffix` varchar(20) DEFAULT NULL COMMENT '文件物理后缀名',
+`ref_count` int(11) NOT NULL DEFAULT 1 COMMENT '硬引用计数 (当降为0时触发物理粉碎磁盘实体)',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '首次入库时间',
+`update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '引用更新时间',
+PRIMARY KEY (`id`),
+UNIQUE KEY `uk_identifier` (`file_identifier`) COMMENT '⚡ 极速探空秒传唯一指纹索引'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='物理文件实体信息表';
+
+-- ====================================================================
+-- 7. 外发风控面：外部链接提取分享表（补充补齐点7缺失表）
+-- ====================================================================
+DROP TABLE IF EXISTS `file_share`;
+CREATE TABLE `file_share` (
+`id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '自增主键ID',
+`user_id` bigint(20) NOT NULL COMMENT '创建分享的用户 ID',
+`user_file_id` bigint(20) NOT NULL COMMENT '分享的网盘逻辑虚拟文件/文件夹 ID(关联 user_file.id)',
+`short_link` varchar(20) NOT NULL COMMENT '8位唯一不重复的短链特征码',
+`extraction_code` varchar(10) DEFAULT NULL COMMENT '4位随机数字提取口令(null表示免密)',
+`expire_time` datetime DEFAULT NULL COMMENT '绝对失效时间戳(null表示永久有效)',
+`create_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '分享链创建时间',
+`update_time` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+PRIMARY KEY (`id`),
+UNIQUE KEY `uk_short_link` (`short_link`),
+KEY `idx_user_file` (`user_id`, `user_file_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='外部链接提取分享表';
+
+SET FOREIGN_KEY_CHECKS = 1;
 
 ## **4\. 核心流控机制与高并发演进算法**
 
