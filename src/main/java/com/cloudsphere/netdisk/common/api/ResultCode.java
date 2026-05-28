@@ -19,6 +19,7 @@ public enum ResultCode {
     PASSWORD_ERROR(1003, "用户名或密码错误"),
     USER_DISABLED(1004, "该账户已被禁用"),
     LOGIN_FAIL_MANY(1005, "登录失败次数过多，请稍后再试"),
+    USERNAME_FORMAT_INVALID(1007, "工号格式不正确！必须为4-20位字母或数字，且不能包含特殊字符"),
 
     // 文件与传输模块相关状态码 (2000-2999)
     FILE_NOT_FOUND(2001, "目标文件或文件夹不存在"),

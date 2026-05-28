@@ -28,7 +28,9 @@ public class UserController {
     @RateLimit(count = 3)
     public ApiResponse<Void> register(@Validated @RequestBody UserRegisterDTO dto) { // 🚀 升级为 UserRegisterDTO
         // 级联透传：工号、密码、真实姓名、所属科室ID、行政岗位角色
-        userService.register(dto.getUsername(), dto.getPassword(), dto.getRealName(), dto.getDeptId(), dto.getRole().getCode());
+//        userService.register(dto.getUsername(), dto.getPassword(), dto.getRealName(), dto.getDeptId(), dto.getRole().getCode());
+        userService.register(dto.getUsername(), dto.getPassword(), dto.getRealName());
+
         return ApiResponse.success();
     }
 

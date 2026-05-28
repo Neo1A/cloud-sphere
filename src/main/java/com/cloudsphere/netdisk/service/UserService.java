@@ -10,8 +10,8 @@ public interface UserService {
      * @param deptId   所属科室部门的物理自增 ID（关联 department 表）
      * @param role     行政岗位角色白名单（ADMIN, MINER_DIRECTOR, VICE_DIRECTOR, SECTION_CHIEF, USER）
      */
-    void register(String username, String password, String realName, Long deptId, String role);
-
+//    void register(String username, String password, String realName, Long deptId, String role);
+    void register(String username, String password, String realName);
     /**
      * 用户登录
      *

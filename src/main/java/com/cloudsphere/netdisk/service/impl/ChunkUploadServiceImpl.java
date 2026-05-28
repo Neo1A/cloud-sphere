@@ -214,4 +214,5 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         virtualFile.setUpdateTime(LocalDateTime.now());
         userFileMapper.insert(virtualFile);
     }
+
 }

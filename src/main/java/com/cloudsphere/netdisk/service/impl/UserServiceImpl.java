@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.constant.UserStatusConstant;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
+import com.cloudsphere.netdisk.common.exception.UsernameFormatException;
 import com.cloudsphere.netdisk.common.utils.JwtUtils;
 import com.cloudsphere.netdisk.entity.User;
 import com.cloudsphere.netdisk.mapper.UserMapper;
@@ -24,7 +25,7 @@ public class UserServiceImpl implements UserService {
 
     private final UserMapper userMapper;
     private final JwtUtils jwtUtils;
-
+    private static final String USERNAME_REGEX = "^[a-zA-Z0-9_]+$";
     // 常驻加盐混淆密匙（绝对不可变更，否则历史用户密码将全部失效）
     private static final String CRYPTO_SALT = "cloudsphere_secure_salt_2026";
 
@@ -37,18 +38,24 @@ public class UserServiceImpl implements UserService {
      * void register(String username, String password, String realName, Long deptId, String role);
      */
     @Override
-    public void register(String username, String password, String realName, Long deptId, String role) {
+//    public void register(String username, String password, String realName, Long deptId, String role) {
+    public void register(String username, String password, String realName) {
+
         // 1.1 刚性验证：拦截非法岗位角色的注入，确保科层合规
-        if (role == null || !VALID_ROLES.contains(role.toUpperCase())) {
-            log.error("注册阻断：非法行政角色签名 [{}]", role);
-            throw new BusinessException(ResultCode.PARAM_ERROR, "非法的企业行政岗位角色");
-        }
+//        if (role == null || !VALID_ROLES.contains(role.toUpperCase())) {
+//            log.error("注册阻断：非法行政角色签名 [{}]", role);
+//            throw new BusinessException(ResultCode.PARAM_ERROR, "非法的企业行政岗位角色");
+//        }
 
         // 1.2 唯一性探空：使用 Lambda 表达式检查工号是否重复
         User existUser = userMapper.selectOne(new LambdaQueryWrapper<User>().eq(User::getUsername, username));
-
+        if (username == null || username.length() < 4 || username.length() > 20) {
+            throw new UsernameFormatException("账号长度必须在 4-20 位之间"); // 🎯 直击痛点
+        }
+        if (!username.matches("^[a-zA-Z0-9_]+$")) {
+            throw new UsernameFormatException("工号格式不正确！仅允许包含字母、数字和下划线");
+        }
         if (existUser != null) {
-            log.warn("注册失败：企业工号 [{}] 已存在，禁止重复入驻", username);
             throw new BusinessException(ResultCode.USER_ALREADY_EXISTS);
         }
 
@@ -60,15 +67,17 @@ public class UserServiceImpl implements UserService {
         user.setUsername(username);
         user.setPassword(encryptPassword);
         user.setRealName(realName);                // 注入员工真实姓名，供审批及分享树人性化渲染
-        user.setDeptId(deptId);                    // 绑定所属科室部门物理ID
-        user.setRole(role.toUpperCase());          // 划定行政职能级别 (ADMIN/MINER_DIRECTOR等)
+//        user.setDeptId(deptId);                    // 绑定所属科室部门物理ID
+//        user.setRole(role.toUpperCase());          // 划定行政职能级别 (ADMIN/MINER_DIRECTOR等)
         user.setStatus(1);
         user.setCreateTime(LocalDateTime.now());
         user.setUpdateTime(LocalDateTime.now());
 
         // 1.5 执行真实数据库插入 (SQL: INSERT INTO user ...)
         userMapper.insert(user);
-        log.info("企业新员工建档成功！工号: {}, 姓名: {}, 职能岗位: {}, 所属部门ID: {}", username, realName, role, deptId);
+//        log.info("企业新员工建档成功！工号: {}, 姓名: {}, 职能岗位: {}, 所属部门ID: {}", username, realName, role, deptId);
+        log.info("企业新员工建档成功！工号: {}, 姓名: {}", username, realName);
+
     }
 
     /**
