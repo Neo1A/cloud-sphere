@@ -48,30 +48,45 @@ class ChunkUploadServiceImplTest {
 
     @TempDir
     Path tempStorageRoot;
+
     @TempDir
     Path tempChunkRoot;
+
     @InjectMocks
     private ChunkUploadServiceImpl chunkUploadService;
+
     @Mock
     private UserFileMapper userFileMapper;
+
     @Mock
     private FileInfoMapper fileInfoMapper;
+
     @Mock
     private UploadSessionMapper sessionMapper;
+
     @Mock
     private StringRedisTemplate redisTemplate;
+
+    // 🎯 补齐修复 1：显式声明事务模板 Mock 桩字段，拒绝“符号无法解析”
     @Mock
     private TransactionTemplate transactionTemplate;
+
     @Mock
     private ChunkIntegrityValidateUtil fileValidator;
+
     @Mock
     private ChunkMergeEngineUtil mergeEngine;
+
     @Mock
     private UploadSessionStateMachineUtil stateMachine;
+
     @Mock
     private UploadTempCleanUtil tempCleaner;
+
     @Mock
     private InstantUploadCheckUtil instantChecker;
+
+    // 🎯 补齐修复 2：显式声明静态 Mock 生命周期钩子字段
     private MockedStatic<UserContextUtils> userContextMock;
     private MockedStatic<StoragePathUtils> storagePathMock;
 
@@ -85,42 +100,51 @@ class ChunkUploadServiceImplTest {
 
         storagePathMock = Mockito.mockStatic(StoragePathUtils.class);
         storagePathMock.when(() -> StoragePathUtils.getHashShardedFolder(anyLong())).thenReturn("ab/cd/");
-        storagePathMock.when(() -> StoragePathUtils.getFullShardedPath(anyLong(), anyString()))
-                .thenAnswer(inv -> "ab/cd/" + inv.getArgument(0, Long.class) + inv.getArgument(1, String.class));
 
+        // 🎯 兼容修复 3：使用强制类型转换替换 getArgument(int, Class)，彻底击穿环境版本异构
+        lenient().when(StoragePathUtils.getFullShardedPath(anyLong(), anyString()))
+                .thenAnswer(inv -> {
+                    Long id = (Long) inv.getArgument(0);
+                    String suffix = (String) inv.getArgument(1);
+                    return "ab/cd/" + id + suffix;
+                });
+
+        @SuppressWarnings("unchecked")
         SetOperations<String, String> setOps = mock(SetOperations.class);
-        when(redisTemplate.opsForSet()).thenReturn(setOps);
-        when(setOps.members(anyString())).thenReturn(Set.of("0", "1"));
-        when(setOps.add(anyString(), anyString())).thenReturn(1L);
-        when(redisTemplate.expire(anyString(), anyLong(), any(TimeUnit.class))).thenReturn(true);
+        lenient().when(redisTemplate.opsForSet()).thenReturn(setOps);
+        lenient().when(setOps.members(anyString())).thenReturn(Set.of("0", "1"));
+        lenient().when(setOps.add(anyString(), anyString())).thenReturn(1L);
+        lenient().when(redisTemplate.expire(anyString(), anyLong(), any(TimeUnit.class))).thenReturn(true);
 
-        // ✅ 关键修复：提供一个非空的 TransactionStatus 模拟对象
         TransactionStatus mockStatus = mock(TransactionStatus.class);
-        when(transactionTemplate.execute(any())).thenAnswer(inv -> {
-            TransactionCallback<?> callback = inv.getArgument(0);
+        lenient().when(transactionTemplate.execute(any())).thenAnswer(inv -> {
+            @SuppressWarnings("unchecked")
+            TransactionCallback<?> callback = (TransactionCallback<?>) inv.getArgument(0);
             return callback.doInTransaction(mockStatus);
         });
-        doAnswer(inv -> {
-            TransactionCallbackWithoutResult callback = inv.getArgument(0);
+
+        lenient().doAnswer(inv -> {
+            TransactionCallbackWithoutResult callback = (TransactionCallbackWithoutResult) inv.getArgument(0);
             callback.doInTransaction(mockStatus);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
 
-        when(sessionMapper.selectOne(any())).thenReturn(null);
-        when(sessionMapper.insert(any(UploadSession.class))).thenReturn(1);
-        when(fileInfoMapper.insert(any(FileInfo.class))).thenAnswer(inv -> {
-            FileInfo fi = inv.getArgument(0);
+        lenient().when(sessionMapper.selectOne(any())).thenReturn(null);
+        lenient().when(sessionMapper.insert(any(UploadSession.class))).thenReturn(1);
+
+        lenient().when(fileInfoMapper.insert(any(FileInfo.class))).thenAnswer(inv -> {
+            FileInfo fi = (FileInfo) inv.getArgument(0);
             fi.setId(100L);
             return 1;
         });
-        when(fileInfoMapper.updateById(any(FileInfo.class))).thenReturn(1);
-        when(userFileMapper.insert(any(UserFile.class))).thenReturn(1);
+        lenient().when(fileInfoMapper.updateById(any(FileInfo.class))).thenReturn(1);
+        lenient().when(userFileMapper.insert(any(UserFile.class))).thenReturn(1);
     }
 
     @AfterEach
     void tearDown() {
-        userContextMock.close();
-        storagePathMock.close();
+        if (userContextMock != null) userContextMock.close();
+        if (storagePathMock != null) storagePathMock.close();
     }
 
     @Test
@@ -160,7 +184,7 @@ class ChunkUploadServiceImplTest {
         var mockFile = mock(org.springframework.web.multipart.MultipartFile.class);
         when(mockFile.isEmpty()).thenReturn(false);
         doAnswer(inv -> {
-            File f = inv.getArgument(0, File.class);
+            File f = (File) inv.getArgument(0);
             Files.createDirectories(f.toPath().getParent());
             Files.writeString(f.toPath(), "chunk-data");
             return null;
@@ -215,9 +239,8 @@ class ChunkUploadServiceImplTest {
         when(stateMachine.claimMergeLock("mergeOk")).thenReturn(true);
         when(fileValidator.validateAndSort(any(Path.class), eq(2))).thenReturn(mockChunks);
 
-        // ✅ 重要：模拟 mergeEngine.merge 时创建临时合并文件，保证后续 Files.move 成功
         doAnswer(inv -> {
-            Path tempFile = inv.getArgument(1, Path.class);
+            Path tempFile = (Path) inv.getArgument(1);
             Files.createDirectories(tempFile.getParent());
             Files.createFile(tempFile);
             return null;
@@ -225,7 +248,6 @@ class ChunkUploadServiceImplTest {
 
         chunkUploadService.mergeChunks(dto);
 
-        // 正确做法：必须用 eq() 包装原始对象
         verify(mergeEngine).merge(eq(mockChunks), any(Path.class));
         verify(fileInfoMapper).insert(any(FileInfo.class));
         verify(fileInfoMapper).updateById(any(FileInfo.class));
@@ -242,6 +264,7 @@ class ChunkUploadServiceImplTest {
         when(instantChecker.checkAndIncrement("ioFail")).thenReturn(null);
         when(stateMachine.claimMergeLock("ioFail")).thenReturn(true);
         when(fileValidator.validateAndSort(any(Path.class), eq(1))).thenReturn(mockChunks);
+
         doThrow(new RuntimeException("IO error")).when(mergeEngine).merge(anyList(), any(Path.class));
 
         assertThatThrownBy(() -> chunkUploadService.mergeChunks(dto))

@@ -26,11 +26,12 @@ public class JwtUtils {
     /**
      * 🚀 重构升级点 1：生成 Token 刚性支持 Long 类型，并追加注入部门维度 deptId 支撑公盘权限隔离
      */
-    public String generateToken(Long userId, String username, Long deptId) {
+//    public String generateToken(Integer userId, String username, Integer deptId) {
+    public String generateToken(Integer userId, String username) {
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("username", username)
-                .claim("deptId", deptId) // 🚀 追加注入企业科层部门ID
+//                .claim("deptId", deptId) // 🚀 追加注入企业科层部门ID
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expiration * 1000))
                 .signWith(getSigningKey())

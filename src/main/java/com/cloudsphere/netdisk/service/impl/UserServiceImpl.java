@@ -25,7 +25,6 @@ public class UserServiceImpl implements UserService {
 
     private final UserMapper userMapper;
     private final JwtUtils jwtUtils;
-    private static final String USERNAME_REGEX = "^[a-zA-Z0-9_]+$";
     // 常驻加盐混淆密匙（绝对不可变更，否则历史用户密码将全部失效）
     private static final String CRYPTO_SALT = "cloudsphere_secure_salt_2026";
 
@@ -105,7 +104,7 @@ public class UserServiceImpl implements UserService {
             throw new BusinessException(ResultCode.PASSWORD_ERROR);
         }
 
-        log.info("员工 [{}] ({}) 验证通过，成功登录矿业数字化仓储大厅。岗位: {}, 科室ID: {}", username, user.getRealName(), user.getRole(), user.getDeptId());
+        log.info("员工 [{}] ({}) 验证通过，成功登录。岗位: {}, 科室ID: {}", username, user.getRealName(), user.getRole(), user.getDeptId());
 
         // 2.3 调用原有 JwtUtils 安全网关，下发分布式无状态通行证
         // 注意：由于底层安全过滤器 Interceptor 拦截时需要从 Token 中还原岗位与科室进行 ACL 熔断判定，

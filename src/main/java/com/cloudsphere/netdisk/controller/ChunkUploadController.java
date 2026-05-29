@@ -1,6 +1,8 @@
 package com.cloudsphere.netdisk.controller;
 
 import com.cloudsphere.netdisk.common.api.ApiResponse;
+import com.cloudsphere.netdisk.common.api.ResultCode;
+import com.cloudsphere.netdisk.common.exception.BusinessException;
 import com.cloudsphere.netdisk.dto.ChunkInitDTO;
 import com.cloudsphere.netdisk.dto.FileMergeDTO;
 import com.cloudsphere.netdisk.service.ChunkUploadService;
@@ -38,11 +40,19 @@ public class ChunkUploadController {
      * 接收前端切分的分片数据，直接投递给虚拟线程处理，实现真正的磁盘 I/O 高并发写入。
      */
     @PostMapping("/upload")
-    public ApiResponse<Void> upload(
+    public ApiResponse<Void> uploadChunk(
             @RequestParam("file") MultipartFile file,
             @RequestParam("identifier") String identifier,
-            @RequestParam("chunkNumber") Integer chunkNumber) {
+            // 🚀 核心优化：将 required 设为 false，允许流量安全进入 Controller 方法体内部
+            @RequestParam(value = "chunkNumber", required = false) Integer chunkNumber) {
 
+        // 🎯 【打靶修复】在应用层前置防御防空检查，优雅转换为受控业务异常
+        if (chunkNumber == null) {
+            log.warn("【分片上传异常】物理客户端传入的 chunkNumber 字段非法或为空白。当前标识: {}", identifier);
+            throw new BusinessException(ResultCode.PARAM_ERROR, "分片序列号(chunkNumber)缺失或格式不正确，必须为有效数字");
+        }
+
+        // 顺畅流入底层 Service 执行分片落盘编排
         chunkUploadService.uploadChunk(file, identifier, chunkNumber);
         return ApiResponse.success();
     }

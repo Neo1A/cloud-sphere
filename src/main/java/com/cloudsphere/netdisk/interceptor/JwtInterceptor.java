@@ -4,7 +4,6 @@ import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
 import com.cloudsphere.netdisk.common.utils.JwtUtils;
 import com.cloudsphere.netdisk.common.utils.UserContextUtils;
-import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -22,55 +21,58 @@ public class JwtInterceptor implements HandlerInterceptor {
 
     private final JwtUtils jwtUtils;
 
-    /**
-     * 前置拦截：在请求到达 Controller 之前执行身份鉴权
-     */
     @Override
     public boolean preHandle(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull Object handler) {
         if (!(handler instanceof HandlerMethod)) {
             return true;
         }
 
-        // 1. 尝试从 Authorization Header 中提取
         String authHeader = request.getHeader("Authorization");
         String token;
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
             token = authHeader.substring(7);
         } else {
-            // 2. 🟢 核心升级：如果 Header 无效，尝试从 URL Query 参数 ?token=xxx 中获取
-            // 这对浏览器原生的 <video>, <img>, <audio> 标签的 src 加载至关重要
             token = request.getParameter("token");
         }
 
-        // 3. 安全判空
         if (token == null || token.isEmpty()) {
-            log.warn("请求未携带有效 Token，路径: {}", request.getRequestURI());
-            throw new BusinessException(ResultCode.UNAUTHORIZED);
+            log.warn("【安全鉴权拒绝】请求未携带 Token 凭证，阻断访问。路径: {}", request.getRequestURI());
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "凭证已失效，请重新登录");
         }
 
         try {
-            // 4. 执行验签
-            Claims claims = jwtUtils.parseToken(token);
-            Long userId = Long.valueOf(claims.getSubject());
+            // 解析安全载荷
+            Long userId = jwtUtils.getUserIdFromToken(token);
+            String username = jwtUtils.getUsernameFromToken(token);
+            Long deptId = jwtUtils.getDeptIdFromToken(token);
 
-            // 5. 绑定上下文
-            UserContextUtils.setUserId(userId);
+            if (userId == null || username == null) {
+                throw new BusinessException(ResultCode.UNAUTHORIZED, "凭证载荷不完备，安全审计失败");
+            }
+
+            // 🎯 核心联动：精准捞出上一个拦截器已经初始化好的、带真实 IP 的会话对象
+            UserContextUtils.UserSession session = UserContextUtils.get();
+            if (session == null) {
+                session = new UserContextUtils.UserSession();
+            }
+
+            // 增量修正会话内的身份数据，覆盖默认的匿名标记
+            session.setUserId(userId);
+            session.setUsername(username);
+            session.setDeptId(deptId);
+
+            // 重新刷新回 ThreadLocal 线程上下文
+            UserContextUtils.set(session);
+
             return true;
 
         } catch (JwtException | IllegalArgumentException e) {
-            log.warn("Token 校验失败，异常: {}", e.getMessage());
-            throw new BusinessException(ResultCode.UNAUTHORIZED);
+            log.warn("【安全鉴权失败】Token 验签故障: {}，路径: {}", e.getMessage(), request.getRequestURI());
+            throw new BusinessException(ResultCode.UNAUTHORIZED, "凭证校验失败，安全审计拒绝");
         }
     }
 
-    /**
-     * 最终清理：请求完全结束（渲染完成后）触发
-     */
-    @Override
-    public void afterCompletion(@NonNull HttpServletRequest request, @NonNull HttpServletResponse response, @NonNull Object handler, Exception ex) {
-        // 必须规范：强制清空当前线程的 ThreadLocal 数据
-        // 在 JDK 26 虚拟线程或 Tomcat 线程池复用模型下，不清理会导致严重的内存泄漏与身份数据串流故障！
-        UserContextUtils.clear();
-    }
+    // 💡 注意：此处原本的 afterCompletion 被彻底移除！
+    // 清理大权全面移交给外层无放行的 GlobalLogInterceptor，防止由于放行逻辑漏掉导致内存泄漏。
 }
