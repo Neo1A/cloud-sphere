@@ -10,7 +10,7 @@ spring:
     name: cloudsphere-netdisk
 
   profiles:
-    active: work
+    active: home
 
   servlet:
     multipart:

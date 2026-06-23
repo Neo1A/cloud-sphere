@@ -146,7 +146,7 @@ public class UserServiceImpl implements UserService {
         // 3.5 构造干净实体执行 MyBatis-Plus 局部更新
         User updateUser = new User();
         // 如果目前实体的 id 还是 int，在此处进行安全收拢强转：updateUser.setId(id.intValue());
-        updateUser.setId(id.intValue());
+        updateUser.setId((long) id.intValue());
         updateUser.setStatus(status);
         updateUser.setUpdateTime(LocalDateTime.now());
 

@@ -24,14 +24,26 @@ public class JwtUtils {
     }
 
     /**
-     * 🚀 重构升级点 1：生成 Token 刚性支持 Long 类型，并追加注入部门维度 deptId 支撑公盘权限隔离
+     * 🚀 核心修复：生成 Token 刚性支持 Long 类型 userId
      */
-//    public String generateToken(Integer userId, String username, Integer deptId) {
-    public String generateToken(Integer userId, String username) {
+    public String generateToken(Long userId, String username) {
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim("username", username)
-//                .claim("deptId", deptId) // 🚀 追加注入企业科层部门ID
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + expiration * 1000))
+                .signWith(getSigningKey())
+                .compact();
+    }
+
+    /**
+     * 企业版多维拓扑拓展：同时注入部门维度 deptId 支撑协同公盘隔离
+     */
+    public String generateToken(Long userId, String username, Long deptId) {
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .claim("username", username)
+                .claim("deptId", deptId)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expiration * 1000))
                 .signWith(getSigningKey())
@@ -48,10 +60,6 @@ public class JwtUtils {
                 .parseSignedClaims(token)
                 .getPayload();
     }
-
-    // ====================================================================
-    // 🚀 重构升级点 2：封装高防快捷语义提取器，防范拦截器层面的隐式类型强制转换异常
-    // ====================================================================
 
     /**
      * 从加密 Token 中快捷安全拆解出用户物理自增 ID（Long）
@@ -84,7 +92,6 @@ public class JwtUtils {
         try {
             Claims claims = parseToken(token);
             Object deptIdObj = claims.get("deptId");
-            // 解决 Jackson 对数值可能带来的反序列化精度失准（统一字符串化中转）
             return deptIdObj != null ? Long.valueOf(deptIdObj.toString()) : null;
         } catch (Exception e) {
             return null;
