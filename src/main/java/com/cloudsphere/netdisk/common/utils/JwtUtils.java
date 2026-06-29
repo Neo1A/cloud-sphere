@@ -97,4 +97,40 @@ public class JwtUtils {
             return null;
         }
     }
+
+    /**
+     * 🔧 调试专用：生成永不过期的后门 Token（仅限开发环境使用）
+     * 
+     * @param userId 用户ID
+     * @param username 用户名
+     * @param deptId 部门ID（可选）
+     * @return 永久有效的 JWT Token（10年有效期）
+     */
+    public String generatePermanentToken(Long userId, String username, Long deptId) {
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .claim("username", username)
+                .claim("deptId", deptId)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 315360000000L)) // 10年有效期
+                .signWith(getSigningKey())
+                .compact();
+    }
+
+    /**
+     * 🔧 调试专用：生成永不过期的后门 Token（无部门信息版本）
+     * 
+     * @param userId 用户ID
+     * @param username 用户名
+     * @return 永久有效的 JWT Token（10年有效期）
+     */
+    public String generatePermanentToken(Long userId, String username) {
+        return Jwts.builder()
+                .subject(String.valueOf(userId))
+                .claim("username", username)
+                .issuedAt(new Date())
+                .expiration(new Date(System.currentTimeMillis() + 315360000000L)) // 10年有效期
+                .signWith(getSigningKey())
+                .compact();
+    }
 }

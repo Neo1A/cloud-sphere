@@ -57,8 +57,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(BusinessException.class)
     public ResponseEntity<ApiResponse<Void>> handleBusinessException(BusinessException e) {
         log.warn("业务领域触发特定小异常拦截: code={}, message={}", e.getResultCode().getCode(), e.getMessage());
-        // 保持 HttpStatus.OK 或根据业务调整，精准返回子异常携带的领域状态码
-        return buildUtf8Response(ApiResponse.failed(e.getResultCode()), HttpStatus.OK);
+        return buildUtf8Response(ApiResponse.failed(e.getResultCode().getCode(), e.getCustomMessage()), HttpStatus.OK);
     }
 
     /**

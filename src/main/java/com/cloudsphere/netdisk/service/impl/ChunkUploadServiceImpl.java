@@ -1,6 +1,7 @@
 package com.cloudsphere.netdisk.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
 import com.cloudsphere.netdisk.common.utils.*; // 全量导入带 Util 后缀的基础基础设施器官
@@ -8,6 +9,7 @@ import com.cloudsphere.netdisk.dto.ChunkInitDTO;
 import com.cloudsphere.netdisk.dto.FileMergeDTO;
 import com.cloudsphere.netdisk.entity.FileInfo;
 import com.cloudsphere.netdisk.entity.UploadSession;
+import com.cloudsphere.netdisk.entity.User;
 import com.cloudsphere.netdisk.entity.UserFile;
 import com.cloudsphere.netdisk.service.ChunkUploadService;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +43,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final com.cloudsphere.netdisk.mapper.UserFileMapper userFileMapper;
     private final com.cloudsphere.netdisk.mapper.FileInfoMapper fileInfoMapper;
     private final com.cloudsphere.netdisk.mapper.UploadSessionMapper sessionMapper;
+    private final com.cloudsphere.netdisk.mapper.UserMapper userMapper;
     private final TransactionTemplate transactionTemplate;
 
     // 🚀 强类型装配规范化命名后的全套 Util 工具链组件
@@ -70,27 +73,33 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         try {
             Files.createDirectories(Paths.get(chunkTempRoot).resolve(identifier));
         } catch (IOException e) {
-            log.error("【分片初始化】构筑临时接收温区失败", e);
+            log.error("【分片初始化】构筑临时接收温区失败，路径: {}/{}", chunkTempRoot, identifier, e);
             throw new BusinessException(ResultCode.SYSTEM_ERROR);
         }
 
-        if (sessionMapper.selectOne(new LambdaQueryWrapper<UploadSession>().eq(UploadSession::getUploadId, identifier)) == null) {
-            UploadSession session = new UploadSession();
-            session.setUploadId(identifier);
-            session.setStatus("UPLOADING");
-            session.setUserId(userId);
-            session.setRepoId(dto.getRepoId());
-            session.setDeptId(dto.getDeptId());
-            session.setCreateTime(LocalDateTime.now());
-            session.setUpdateTime(LocalDateTime.now());
-            try {
+        try {
+            if (sessionMapper.selectOne(new LambdaQueryWrapper<UploadSession>().eq(UploadSession::getUploadId, identifier)) == null) {
+                UploadSession session = new UploadSession();
+                session.setUploadId(identifier);
+                session.setStatus("UPLOADING");
+                session.setUserId(userId);
+                session.setRepoId(dto.getRepoId());
+                session.setDeptId(dto.getDeptId());
+                session.setCreateTime(LocalDateTime.now());
+                session.setUpdateTime(LocalDateTime.now());
                 sessionMapper.insert(session);
-            } catch (Exception ignored) {
             }
+        } catch (Exception e) {
+            log.warn("【分片初始化】upload_session 表写入失败（可能表不存在），继续流程: {}", e.getMessage());
         }
 
-        return Optional.ofNullable(redisTemplate.opsForSet().members(REDIS_CHUNK_KEY_PREFIX + identifier))
-                .orElse(Collections.emptySet()).stream().map(Integer::parseInt).collect(Collectors.toSet());
+        try {
+            return Optional.ofNullable(redisTemplate.opsForSet().members(REDIS_CHUNK_KEY_PREFIX + identifier))
+                    .orElse(Collections.emptySet()).stream().map(Integer::parseInt).collect(Collectors.toSet());
+        } catch (Exception e) {
+            log.warn("【分片初始化】Redis 不可达，返回空续传集合: {}", e.getMessage());
+            return Collections.emptySet();
+        }
     }
 
     @Override
@@ -102,8 +111,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             file.transferTo(chunkDir.resolve(String.valueOf(chunkNumber)).toFile());
 
             String redisKey = REDIS_CHUNK_KEY_PREFIX + identifier;
-            redisTemplate.opsForSet().add(redisKey, String.valueOf(chunkNumber));
-            redisTemplate.expire(redisKey, 7, TimeUnit.DAYS);
+            try {
+                redisTemplate.opsForSet().add(redisKey, String.valueOf(chunkNumber));
+                redisTemplate.expire(redisKey, 7, TimeUnit.DAYS);
+            } catch (Exception e) {
+                log.warn("【分片上传】Redis 不可达，跳过续传记录: {}", e.getMessage());
+            }
         } catch (IOException e) {
             throw new BusinessException(ResultCode.SYSTEM_ERROR, "后端物理分片流并发写盘失败");
         }
@@ -122,7 +135,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // 1. 调用秒传核验 Util
         FileInfo existPhysicalFile = instantChecker.checkAndIncrement(identifier);
         if (existPhysicalFile != null) {
+            checkQuota(userId, existPhysicalFile.getFileSize());
             insertVirtualFile(userId, dto.getParentId(), dto.getFileName(), existPhysicalFile.getId(), dto.getDeptId(), dto.getRepoId());
+            addUsedStorage(userId, existPhysicalFile.getFileSize());
             stateMachine.forceUpdateStatus(identifier, "DONE");
             tempCleaner.clearTempChunksAsync(Paths.get(chunkTempRoot).resolve(identifier), REDIS_CHUNK_KEY_PREFIX + identifier);
             return;
@@ -170,11 +185,18 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
                     // 锁多元数据
                     physicalFile.setFilePath(relativeFilePath);
-                    physicalFile.setFileSize(Files.size(targetAbsoluteFile));
+                    long mergedFileSize = Files.size(targetAbsoluteFile);
+                    physicalFile.setFileSize(mergedFileSize);
                     fileInfoMapper.updateById(physicalFile);
+
+                    // 容量配额原子核验
+                    checkQuota(userId, mergedFileSize);
 
                     // 多租户树挂载
                     insertVirtualFile(userId, dto.getParentId(), dto.getFileName(), physicalFile.getId(), dto.getDeptId(), dto.getRepoId());
+
+                    // 原子累计已用空间
+                    addUsedStorage(userId, mergedFileSize);
 
                     // 状态机闭环推进
                     stateMachine.updateStatus(identifier, "MERGING", "DONE");
@@ -213,6 +235,26 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         virtualFile.setCreateTime(LocalDateTime.now());
         virtualFile.setUpdateTime(LocalDateTime.now());
         userFileMapper.insert(virtualFile);
+    }
+
+    private void checkQuota(Long userId, long fileSize) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(ResultCode.USER_NOT_FOUND);
+        }
+        Long quota = user.getTotalQuota();
+        if (quota != null && quota > 0) {
+            long used = user.getUsedStorage() != null ? user.getUsedStorage() : 0L;
+            if (used + fileSize > quota) {
+                throw new BusinessException(ResultCode.SPACE_LIMIT_EXCEEDED);
+            }
+        }
+    }
+
+    private void addUsedStorage(Long userId, long fileSize) {
+        userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .setSql("used_storage = COALESCE(used_storage, 0) + " + fileSize)
+                .eq(User::getId, userId));
     }
 
 }

@@ -15,4 +15,8 @@ public class FolderCreateDTO {
 
     @NotNull(message = "父级ID不能为空")
     private Long parentId;
+
+    private Long deptId;
+
+    private Long repoId;
 }

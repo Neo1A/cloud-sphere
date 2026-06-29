@@ -10,7 +10,7 @@ spring:
     name: cloudsphere-netdisk
 
   profiles:
-    active: home
+    active: work
 
   servlet:
     multipart:
@@ -32,3 +32,5 @@ cloudsphere:
   jwt:
     secret: cloudsphere_super_secure_random_key_for_jwt_token_generation_2026
     expiration: 86400
+  debug:
+    enabled: true  # 生产环境设为 false

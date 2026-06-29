@@ -1,14 +1,17 @@
 package com.cloudsphere.netdisk.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
 import com.cloudsphere.netdisk.common.utils.UserContextUtils;
 import com.cloudsphere.netdisk.dto.FolderCreateDTO;
 import com.cloudsphere.netdisk.entity.FileInfo;
+import com.cloudsphere.netdisk.entity.User;
 import com.cloudsphere.netdisk.entity.UserFile;
 import com.cloudsphere.netdisk.mapper.FileInfoMapper;
 import com.cloudsphere.netdisk.mapper.UserFileMapper;
+import com.cloudsphere.netdisk.mapper.UserMapper;
 import com.cloudsphere.netdisk.service.FileService;
 import com.cloudsphere.netdisk.vo.FileInfoVO;
 import jakarta.annotation.PostConstruct;
@@ -38,6 +41,7 @@ public class FileServiceImpl implements FileService {
 
     private final UserFileMapper userFileMapper;
     private final FileInfoMapper fileInfoMapper;
+    private final UserMapper userMapper;
 
     @Value("${cloudsphere.upload.storage-path}")
     private String storageRoot;
@@ -76,6 +80,8 @@ public class FileServiceImpl implements FileService {
         folder.setParentId(dto.getParentId());
         folder.setFileName(dto.getName());
         folder.setIsDir(true);
+        folder.setDeptId(dto.getDeptId() != null ? dto.getDeptId() : UserContextUtils.getDeptId());
+        folder.setRepoId(dto.getRepoId() != null ? dto.getRepoId() : 0L);
         folder.setDeleted(0);
         folder.setCreateTime(LocalDateTime.now());
         folder.setUpdateTime(LocalDateTime.now());
@@ -136,7 +142,7 @@ public class FileServiceImpl implements FileService {
      * 4. 真实物理文件写入（安全防爆兼具直传秒传版）
      */
     @Override
-    public void uploadPhysicalFile(MultipartFile file, String sha256, Long parentId, String fileName) {
+    public void uploadPhysicalFile(MultipartFile file, String sha256, Long parentId, String fileName, Long deptId, Long repoId) {
         Long userId = UserContextUtils.getUserId();
         validateParentPermission(parentId, userId);
 
@@ -148,16 +154,23 @@ public class FileServiceImpl implements FileService {
                 .eq(FileInfo::getFileIdentifier, sha256));
 
         if (physicalFile != null) {
+            checkQuota(userId, physicalFile.getFileSize());
             log.info("【直传秒传安全大闸触发】哈希 [{}] 实体已存在，跳过物理落盘，直接复用软链接", sha256);
             physicalFile.setRefCount(physicalFile.getRefCount() + 1);
             fileInfoMapper.updateById(physicalFile);
-            insertVirtualFile(userId, parentId, fileName, physicalFile.getId());
+            insertVirtualFile(userId, parentId, fileName, physicalFile.getId(), deptId, repoId);
+            addUsedStorage(userId, physicalFile.getFileSize());
             return;
         }
 
-        String ext = Objects.requireNonNull(file.getOriginalFilename()).contains(".") ? file.getOriginalFilename().substring(file.getOriginalFilename().lastIndexOf(".")) : "";
+        checkQuota(userId, file.getSize());
+
+        String originalFilename = file.getOriginalFilename();
+        String ext = (originalFilename != null && originalFilename.contains("."))
+                ? originalFilename.substring(originalFilename.lastIndexOf(".")) : "";
         Path targetPath = Paths.get(storageRoot).resolve(sha256 + ext);
         try {
+            Files.createDirectories(targetPath.getParent());
             file.transferTo(targetPath.toFile());
 
             FileInfo newPhysicalFile = new FileInfo();
@@ -169,9 +182,10 @@ public class FileServiceImpl implements FileService {
             newPhysicalFile.setCreateTime(LocalDateTime.now());
             fileInfoMapper.insert(newPhysicalFile);
 
-            insertVirtualFile(userId, parentId, fileName, newPhysicalFile.getId());
+            insertVirtualFile(userId, parentId, fileName, newPhysicalFile.getId(), deptId, repoId);
+            addUsedStorage(userId, file.getSize());
         } catch (IOException e) {
-            log.error("常规直传文件物理写入发生异常", e);
+            log.error("常规直传文件物理写入异常，路径: {}, 原因: {}", targetPath, e.getMessage());
             throw new BusinessException(ResultCode.SYSTEM_ERROR);
         }
     }
@@ -184,8 +198,19 @@ public class FileServiceImpl implements FileService {
         Long userId = UserContextUtils.getUserId();
         UserFile vf = userFileMapper.selectById(fileId);
 
-        if (vf == null || !vf.getUserId().equals(userId)) {
+        if (vf == null) {
+            throw new BusinessException(ResultCode.FILE_NOT_FOUND);
+        }
+        if (!vf.getUserId().equals(userId)) {
             throw new BusinessException(ResultCode.FORBIDDEN);
+        }
+
+        long fileSize = 0L;
+        if (!vf.getIsDir() && vf.getFileInfoId() != null) {
+            FileInfo pf = fileInfoMapper.selectById(vf.getFileInfoId());
+            if (pf != null) {
+                fileSize = pf.getFileSize() != null ? pf.getFileSize() : 0L;
+            }
         }
 
         userFileMapper.deleteById(fileId);
@@ -204,6 +229,10 @@ public class FileServiceImpl implements FileService {
                 }
             }
         }
+
+        if (fileSize > 0) {
+            subtractUsedStorage(userId, fileSize);
+        }
     }
 
     /**
@@ -220,9 +249,13 @@ public class FileServiceImpl implements FileService {
                 .eq(UserFile::getUserId, userId)
                 .eq(UserFile::getDeleted, 0));
 
-        if (virtualFile == null || virtualFile.getIsDir()) {
+        if (virtualFile == null) {
             log.warn("🚨【防越权安全阻断】用户 [{}] 企图越权探测或下载不存在/属于他人的文件逻辑 ID: {}", userId, fileId);
-            throw new BusinessException(ResultCode.FORBIDDEN); // 403 熔断
+            throw new BusinessException(ResultCode.FILE_NOT_FOUND);
+        }
+
+        if (virtualFile.getIsDir()) {
+            throw new BusinessException(ResultCode.PARAM_ERROR, "暂不支持直接下载文件夹，请使用打包下载");
         }
 
         // 🛡️ 🎯 关卡 2.5：后置物理熔断墙！坚决不允许高危程序包经由非受信下载管道外发（阻断 .exe/.msi 渗透）
@@ -421,13 +454,15 @@ public class FileServiceImpl implements FileService {
     /**
      * 提取公共的虚拟逻辑树挂载动作
      */
-    private void insertVirtualFile(Long userId, Long parentId, String fileName, Long fileInfoId) {
+    private void insertVirtualFile(Long userId, Long parentId, String fileName, Long fileInfoId, Long deptId, Long repoId) {
         UserFile virtualFile = new UserFile();
         virtualFile.setUserId(userId);
         virtualFile.setParentId(parentId);
         virtualFile.setFileName(fileName);
         virtualFile.setIsDir(false);
         virtualFile.setFileInfoId(fileInfoId);
+        virtualFile.setDeptId(deptId);
+        virtualFile.setRepoId(repoId);
         virtualFile.setDeleted(0);
         virtualFile.setCreateTime(LocalDateTime.now());
         virtualFile.setUpdateTime(LocalDateTime.now());
@@ -443,5 +478,31 @@ public class FileServiceImpl implements FileService {
         if (pf == null || !pf.getUserId().equals(userId) || !pf.getIsDir()) {
             throw new BusinessException(ResultCode.FORBIDDEN);
         }
+    }
+
+    private void checkQuota(Long userId, long fileSize) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(ResultCode.USER_NOT_FOUND);
+        }
+        Long quota = user.getTotalQuota();
+        if (quota != null && quota > 0) {
+            long used = user.getUsedStorage() != null ? user.getUsedStorage() : 0L;
+            if (used + fileSize > quota) {
+                throw new BusinessException(ResultCode.SPACE_LIMIT_EXCEEDED);
+            }
+        }
+    }
+
+    private void addUsedStorage(Long userId, long fileSize) {
+        userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .setSql("used_storage = COALESCE(used_storage, 0) + " + fileSize)
+                .eq(User::getId, userId));
+    }
+
+    private void subtractUsedStorage(Long userId, long fileSize) {
+        userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .setSql("used_storage = GREATEST(COALESCE(used_storage, 0) - " + fileSize + ", 0)")
+                .eq(User::getId, userId));
     }
 }

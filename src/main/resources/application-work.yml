@@ -18,5 +18,5 @@ spring:
 
 cloudsphere:
   upload:
-    storage-path: C:/Users/NRO/Desktop/cloudsphere/storage
-    temp-path: C:/Users/NRO/Desktop/cloudsphere/temp
+    storage-path: C:/cloudsphere/storage
+    temp-path: C:/cloudsphere/temp

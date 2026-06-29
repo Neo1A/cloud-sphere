@@ -32,6 +32,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
                 .excludePathPatterns(
                         "/user/login",
                         "/user/register",
+                        "/api/debug/**",           // 🔧 调试接口白名单（生产环境需移除）
                         "/file/share/info/**",     // 🔓 放行获取分享元数据
                         "/file/share/verify",      // 🔓 放行验证提取口令
                         "/file/share/download/**"  // 🔓 放行匿名流式直连物理下载

@@ -10,7 +10,7 @@ public interface FileService {
     void createFolder(FolderCreateDTO dto);
     List<FileInfoVO> listFiles(Long parentId);
 
-    void uploadPhysicalFile(MultipartFile file, String sha256, Long parentId, String fileName);
+    void uploadPhysicalFile(MultipartFile file, String sha256, Long parentId, String fileName, Long deptId, Long repoId);
     void deleteFile(Long fileId);
     void downloadFileStream(Long fileId, jakarta.servlet.http.HttpServletRequest request, jakarta.servlet.http.HttpServletResponse response);
     void downloadFolderStream(Long folderId, HttpServletResponse response);

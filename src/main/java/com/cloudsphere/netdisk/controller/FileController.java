@@ -30,9 +30,11 @@ public class FileController {
             @RequestParam("file") MultipartFile file,
             @RequestParam("sha256") String sha256,
             @RequestParam("parentId") Long parentId,
-            @RequestParam("fileName") String fileName) {
-        log.info("【直传服务】收到物理文件上传请求，文件名: {}, 哈希: {}", fileName, sha256);
-        fileService.uploadPhysicalFile(file, sha256, parentId, fileName);
+            @RequestParam("fileName") String fileName,
+            @RequestParam(value = "deptId", required = false, defaultValue = "0") Long deptId,
+            @RequestParam(value = "repoId", required = false, defaultValue = "0") Long repoId) {
+        log.info("【直传服务】收到物理文件上传请求，文件名: {}, 哈希: {}, deptId: {}, repoId: {}", fileName, sha256, deptId, repoId);
+        fileService.uploadPhysicalFile(file, sha256, parentId, fileName, deptId, repoId);
         return ApiResponse.success();
     }
 

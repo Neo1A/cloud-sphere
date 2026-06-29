@@ -1,6 +1,7 @@
 package com.cloudsphere.netdisk.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.cloudsphere.netdisk.common.api.ResultCode;
 import com.cloudsphere.netdisk.common.exception.BusinessException;
 import com.cloudsphere.netdisk.common.utils.UserContextUtils;
@@ -8,10 +9,12 @@ import com.cloudsphere.netdisk.dto.ShareCreateDTO;
 import com.cloudsphere.netdisk.dto.ShareSaveDTO;
 import com.cloudsphere.netdisk.entity.FileInfo;
 import com.cloudsphere.netdisk.entity.FileShare;
+import com.cloudsphere.netdisk.entity.User;
 import com.cloudsphere.netdisk.entity.UserFile;
 import com.cloudsphere.netdisk.mapper.FileInfoMapper;
 import com.cloudsphere.netdisk.mapper.FileShareMapper;
 import com.cloudsphere.netdisk.mapper.UserFileMapper;
+import com.cloudsphere.netdisk.mapper.UserMapper;
 import com.cloudsphere.netdisk.service.ShareService;
 import com.cloudsphere.netdisk.vo.ShareVO;
 import jakarta.servlet.http.HttpServletResponse;
@@ -40,7 +43,8 @@ public class ShareServiceImpl implements ShareService {
 
     private final FileShareMapper fileShareMapper;
     private final UserFileMapper userFileMapper;
-    private final FileInfoMapper fileInfoMapper; // 🎯 注入物理映射，用以穿透多租户壁垒
+    private final FileInfoMapper fileInfoMapper;
+    private final UserMapper userMapper; // 🎯 注入物理映射，用以穿透多租户壁垒
 
     @Override
     public ShareVO createShare(ShareCreateDTO dto) {
@@ -112,10 +116,10 @@ public class ShareServiceImpl implements ShareService {
     public Map<String, Object> getShareInfo(String shortLink) {
         FileShare fileShare = fileShareMapper.selectOne(new LambdaQueryWrapper<FileShare>().eq(FileShare::getShortLink, shortLink));
         if (fileShare == null) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "分享资产链路不存在");
+            throw new BusinessException(ResultCode.SHARE_NOT_FOUND);
         }
         if (fileShare.getExpireTime() != null && fileShare.getExpireTime().isBefore(LocalDateTime.now())) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "该极光分享链接已过期失效");
+            throw new BusinessException(ResultCode.SHARE_EXPIRED);
         }
 
         UserFile userFile = userFileMapper.selectById(fileShare.getUserFileId());
@@ -157,13 +161,13 @@ public class ShareServiceImpl implements ShareService {
     public void verifyShareCode(String shortLink, String extractionCode) {
         FileShare fileShare = fileShareMapper.selectOne(new LambdaQueryWrapper<FileShare>().eq(FileShare::getShortLink, shortLink));
         if (fileShare == null) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "分享资产链路不存在");
+            throw new BusinessException(ResultCode.SHARE_NOT_FOUND);
         }
         if (fileShare.getExpireTime() != null && fileShare.getExpireTime().isBefore(LocalDateTime.now())) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "该极光分享链接已过期失效");
+            throw new BusinessException(ResultCode.SHARE_EXPIRED);
         }
         if (fileShare.getExtractionCode() != null && !fileShare.getExtractionCode().equals(extractionCode)) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "提取口令错误，拒绝解除密码锁");
+            throw new BusinessException(ResultCode.SHARE_CODE_ERROR);
         }
     }
 
@@ -175,13 +179,13 @@ public class ShareServiceImpl implements ShareService {
         // 1. 安全风控前置校验
         FileShare fileShare = fileShareMapper.selectOne(new LambdaQueryWrapper<FileShare>().eq(FileShare::getShortLink, shortLink));
         if (fileShare == null) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "分享链接不存在");
+            throw new BusinessException(ResultCode.SHARE_NOT_FOUND, "分享链接不存在");
         }
         if (fileShare.getExpireTime() != null && fileShare.getExpireTime().isBefore(LocalDateTime.now())) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "链接已失效");
+            throw new BusinessException(ResultCode.SHARE_EXPIRED, "链接已失效");
         }
         if (fileShare.getExtractionCode() != null && !fileShare.getExtractionCode().equals(extractionCode)) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "防盗刷机制拦截：提取口令不匹配");
+            throw new BusinessException(ResultCode.SHARE_CODE_ERROR, "防盗刷机制拦截：提取口令不匹配");
         }
 
         UserFile userFile = userFileMapper.selectById(fileShare.getUserFileId());
@@ -242,13 +246,13 @@ public class ShareServiceImpl implements ShareService {
         FileShare fileShare = fileShareMapper.selectOne(new LambdaQueryWrapper<FileShare>()
                 .eq(FileShare::getShortLink, dto.getShortLink()));
         if (fileShare == null) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "分享资产链路不存在");
+            throw new BusinessException(ResultCode.SHARE_NOT_FOUND, "分享资产链路不存在");
         }
         if (fileShare.getExpireTime() != null && fileShare.getExpireTime().isBefore(LocalDateTime.now())) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "该分享已过期失效，无法转存");
+            throw new BusinessException(ResultCode.SHARE_EXPIRED, "该分享已过期失效，无法转存");
         }
         if (fileShare.getExtractionCode() != null && !fileShare.getExtractionCode().equals(dto.getExtractionCode())) {
-            throw new BusinessException(ResultCode.PARAM_ERROR, "防盗刷大闸：提取码错误，拒绝转存");
+            throw new BusinessException(ResultCode.SHARE_CODE_ERROR, "防盗刷大闸：提取码错误，拒绝转存");
         }
 
         // 3. 定位分享源头逻辑文件
@@ -280,6 +284,9 @@ public class ShareServiceImpl implements ShareService {
         // 5. 【物权引用计数暴涨】：让底层物理实体的引用计数递增，防止原作者删除文件时把底层物理实体直接粉碎
         FileInfo fileInfo = fileInfoMapper.selectById(sourceUserFile.getFileInfoId());
         if (fileInfo != null) {
+            if (fileInfo.getFileSize() != null && fileInfo.getFileSize() > 0) {
+                checkQuota(currentUserId, fileInfo.getFileSize());
+            }
             fileInfo.setRefCount(fileInfo.getRefCount() + 1);
             fileInfoMapper.updateById(fileInfo);
         }
@@ -287,7 +294,7 @@ public class ShareServiceImpl implements ShareService {
         // 6. 【逻辑挂载】：为新用户在虚拟树上克隆一个全新物权节点
         UserFile targetUserFile = new UserFile();
         targetUserFile.setUserId(currentUserId);
-        targetUserFile.setFileInfoId(sourceUserFile.getFileInfoId()); // 💡 灵魂指向：共用同一个物理底层
+        targetUserFile.setFileInfoId(sourceUserFile.getFileInfoId());
         targetUserFile.setFileName(finalFileName);
         targetUserFile.setParentId(parentId);
         targetUserFile.setIsDir(sourceUserFile.getIsDir());
@@ -296,6 +303,31 @@ public class ShareServiceImpl implements ShareService {
         targetUserFile.setUpdateTime(LocalDateTime.now());
 
         userFileMapper.insert(targetUserFile);
+
+        if (fileInfo != null && fileInfo.getFileSize() != null && fileInfo.getFileSize() > 0) {
+            addUsedStorage(currentUserId, fileInfo.getFileSize());
+        }
+
         log.info("🟢【秒传网关】用户 [{}] 成功通过短链 [{}] 转存文件 [{}] 到云盘中", currentUserId, dto.getShortLink(), finalFileName);
+    }
+
+    private void checkQuota(Long userId, long fileSize) {
+        User user = userMapper.selectById(userId);
+        if (user == null) {
+            throw new BusinessException(ResultCode.USER_NOT_FOUND);
+        }
+        Long quota = user.getTotalQuota();
+        if (quota != null && quota > 0) {
+            long used = user.getUsedStorage() != null ? user.getUsedStorage() : 0L;
+            if (used + fileSize > quota) {
+                throw new BusinessException(ResultCode.SPACE_LIMIT_EXCEEDED);
+            }
+        }
+    }
+
+    private void addUsedStorage(Long userId, long fileSize) {
+        userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .setSql("used_storage = COALESCE(used_storage, 0) + " + fileSize)
+                .eq(User::getId, userId));
     }
 }
